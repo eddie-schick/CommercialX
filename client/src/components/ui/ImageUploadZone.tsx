@@ -39,9 +39,9 @@ export function ImageUploadZone({
       setUploading((prev) => prev.filter((id) => id !== variables.filename));
       toast.success("Image uploaded successfully");
     },
-    onError: (error: any) => {
+    onError: (error: any, variables) => {
       toast.error(error.message || "Failed to upload image");
-      setUploading((prev) => prev.slice(0, -1));
+      setUploading((prev) => prev.filter((id) => id !== variables.filename));
     },
   });
 

@@ -15,6 +15,8 @@ export interface VINInputProps extends Omit<React.ComponentProps<typeof Input>, 
   label?: string;
   description?: string;
   error?: string;
+  disabled?: boolean;
+  waitForValidation?: boolean; // If true, won't auto-decode until explicitly enabled
 }
 
 export function VINInput({
@@ -26,12 +28,14 @@ export function VINInput({
   description,
   error,
   className,
+  disabled = false,
+  waitForValidation = false,
   ...props
 }: VINInputProps) {
-  const [isDecoding, setIsDecoding] = React.useState(false);
   const [decodeStatus, setDecodeStatus] = React.useState<"idle" | "success" | "error">("idle");
   const [decodeError, setDecodeError] = React.useState<string | null>(null);
   const lastDecodedVIN = React.useRef<string>("");
+  const timeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
   // Validate VIN format
   const isValidFormat = React.useMemo(() => {
@@ -42,29 +46,61 @@ export function VINInput({
   }, [value]);
 
   const decodeMutation = trpc.vin.decode.useMutation({
+    onMutate: () => {
+      console.log("[VINInput] Starting VIN decode mutation for:", value);
+      setDecodeStatus("idle");
+      setDecodeError(null);
+    },
     onSuccess: (result) => {
+      // Clear any timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+      console.log("[VINInput] VIN decode success:", result);
+      
       if (result.success && result.data) {
         setDecodeStatus("success");
         lastDecodedVIN.current = value;
+        setDecodeError(null);
+        console.log("[VINInput] Calling onDecode callback with data");
         onDecode?.(result.data);
-        setIsDecoding(false);
       } else {
         const errorMessage = result.error || "Failed to decode VIN";
+        console.error("[VINInput] Decode returned unsuccessful result:", result);
         setDecodeError(errorMessage);
         setDecodeStatus("error");
         onDecodeError?.(errorMessage);
-        setIsDecoding(false);
       }
     },
     onError: (err) => {
-      console.error("VIN decode error:", err);
+      // Clear any timeout
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+
+      console.error("[VINInput] VIN decode error:", err);
+      console.error("[VINInput] Error details:", {
+        message: err.message,
+        data: err.data,
+        shape: err.shape,
+        cause: err.cause,
+      });
+      
       const errorMessage = err.message || "Failed to decode VIN";
       setDecodeError(errorMessage);
       setDecodeStatus("error");
       onDecodeError?.(errorMessage);
-      setIsDecoding(false);
+    },
+    onSettled: () => {
+      console.log("[VINInput] VIN decode mutation settled (completed)");
     },
   });
+
+  // Use mutation's isPending state instead of managing our own
+  const isDecoding = decodeMutation.isPending;
   
   const handleDecode = async () => {
     if (!isValidFormat) {
@@ -73,23 +109,66 @@ export function VINInput({
       return;
     }
 
-    setIsDecoding(true);
     setDecodeStatus("idle");
     setDecodeError(null);
+
+    // Set a timeout to prevent infinite loading (30 seconds)
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    timeoutRef.current = setTimeout(() => {
+      if (decodeMutation.isPending) {
+        console.error("VIN decode timeout after 30 seconds");
+        setDecodeError("Request timed out. Please check your connection and try again.");
+        setDecodeStatus("error");
+        onDecodeError?.("Request timed out. Please check your connection and try again.");
+        // Reset mutation state
+        decodeMutation.reset();
+      }
+    }, 30000);
 
     decodeMutation.mutate({ vin: value });
   };
 
   // Auto-decode when VIN reaches 17 characters
+  // Only if waitForValidation is false (user validation complete) or disabled is false
   React.useEffect(() => {
+    // Don't auto-decode if waiting for validation or if disabled
+    if (waitForValidation || disabled) {
+      return;
+    }
+    
     if (isValidFormat && value.length === 17 && value !== lastDecodedVIN.current && !isDecoding) {
-      setIsDecoding(true);
       setDecodeStatus("idle");
       setDecodeError(null);
+
+      // Set a timeout to prevent infinite loading (30 seconds)
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        if (decodeMutation.isPending) {
+          console.error("VIN decode timeout after 30 seconds");
+          setDecodeError("Request timed out. Please check your connection and try again.");
+          setDecodeStatus("error");
+          onDecodeError?.("Request timed out. Please check your connection and try again.");
+          decodeMutation.reset();
+        }
+      }, 30000);
+
       decodeMutation.mutate({ vin: value });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, isValidFormat, isDecoding]);
+  }, [value, isValidFormat, isDecoding, waitForValidation, disabled]);
+
+  // Cleanup timeout on unmount
+  React.useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value.toUpperCase();
@@ -106,6 +185,18 @@ export function VINInput({
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Prevent form submission when Enter is pressed
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      // If VIN is complete and valid, trigger decode manually
+      if (isValidFormat && value.length === 17 && value !== lastDecodedVIN.current && !isDecoding) {
+        handleDecode();
+      }
+    }
+  };
+
   return (
     <div className="space-y-2">
       {label && (
@@ -118,6 +209,7 @@ export function VINInput({
           <Input
             value={value}
             onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
             placeholder="Enter 17-character VIN"
             maxLength={17}
             className={cn(

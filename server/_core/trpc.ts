@@ -13,7 +13,8 @@ export const publicProcedure = t.procedure;
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
 
-  if (!ctx.user) {
+  // Check for either OAuth user or Supabase user
+  if (!ctx.user && !ctx.supabaseUser) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
   }
 
@@ -21,6 +22,7 @@ const requireUser = t.middleware(async opts => {
     ctx: {
       ...ctx,
       user: ctx.user,
+      supabaseUser: ctx.supabaseUser,
     },
   });
 });
@@ -31,7 +33,34 @@ export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
 
-    if (!ctx.user || ctx.user.role !== 'admin') {
+    // Check if user is admin (either OAuth or Supabase)
+    let isAdmin = false;
+
+    if (ctx.user && ctx.user.role === 'admin') {
+      isAdmin = true;
+    } else if (ctx.supabaseUser) {
+      // Check organization_users table for admin role
+      const { getSupabaseClient } = await import("./supabase");
+      const supabase = getSupabaseClient();
+      
+      try {
+        const { data, error } = await supabase
+          .from('"01. Organization".organization_users')
+          .select('role')
+          .eq('user_id', ctx.supabaseUser.id)
+          .eq('status', 'active')
+          .single();
+
+        if (!error && data && (data.role === 'admin' || data.role === 'owner')) {
+          isAdmin = true;
+        }
+      } catch (error) {
+        // If check fails, user is not admin
+        console.warn('[AdminProcedure] Failed to check Supabase user role:', error);
+      }
+    }
+
+    if (!isAdmin) {
       throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
     }
 
@@ -39,6 +68,7 @@ export const adminProcedure = t.procedure.use(
       ctx: {
         ...ctx,
         user: ctx.user,
+        supabaseUser: ctx.supabaseUser,
       },
     });
   }),

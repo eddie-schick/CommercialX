@@ -1,14 +1,32 @@
+import React from "react";
 import DealerDashboardLayout from "@/components/DealerDashboardLayout";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Link } from "wouter";
 import {
   Package,
   Zap,
+  CheckCircle2,
+  X,
+  Car,
 } from "lucide-react";
 
-export default function DealerDashboard() {
+function DealerDashboardContent() {
+  // Check if onboarding is complete from URL params
+  const searchParams = new URLSearchParams(window.location.search);
+  const [showOnboardingComplete, setShowOnboardingComplete] = React.useState(
+    searchParams.get("onboarding_complete") === "true"
+  );
   const quickActions = [
+    {
+      title: "Create Vehicle Listing",
+      description: "Add a new vehicle to your inventory",
+      icon: Car,
+      href: "/dealer/listings/new",
+      color: "text-blue-600",
+    },
     {
       title: "Add Body/Equipment",
       description: "Add upfitting equipment to your catalog",
@@ -28,6 +46,25 @@ export default function DealerDashboard() {
   return (
     <DealerDashboardLayout>
       <div className="space-y-8">
+        {/* Onboarding Complete Banner */}
+        {showOnboardingComplete && (
+          <Alert className="border-green-200 bg-green-50">
+            <CheckCircle2 className="h-4 w-4 text-green-600" />
+            <AlertTitle className="text-green-800">Welcome to CommercialX!</AlertTitle>
+            <AlertDescription className="text-green-700">
+              Your organization and first vehicle have been set up successfully. You're all set to start selling!
+            </AlertDescription>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-2 top-2"
+              onClick={() => setShowOnboardingComplete(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </Alert>
+        )}
+
         {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
@@ -66,5 +103,13 @@ export default function DealerDashboard() {
 
       </div>
     </DealerDashboardLayout>
+  );
+}
+
+export default function DealerDashboard() {
+  return (
+    <ProtectedRoute requireDealer={true}>
+      <DealerDashboardContent />
+    </ProtectedRoute>
   );
 }

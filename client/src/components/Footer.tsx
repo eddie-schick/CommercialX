@@ -5,8 +5,10 @@ import { APP_LOGO } from "@/const";
 import { useState } from "react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
 
 export default function Footer() {
+  const { profile } = useCurrentUser();
   const [email, setEmail] = useState("");
   const subscribeNewsletter = trpc.newsletter.subscribe.useMutation();
 
@@ -108,11 +110,13 @@ export default function Footer() {
           <div>
             <h4 className="font-semibold mb-4">For Dealers</h4>
             <ul className="space-y-2 text-sm">
-              <li>
-                <Link href="/dealer/list-inventory" className="text-muted-foreground hover:text-primary transition-colors">
-                  List Your Inventory
-                </Link>
-              </li>
+              {profile && (
+                <li>
+                  <Link href="/dealer/list-inventory" className="text-muted-foreground hover:text-primary transition-colors">
+                    List Your Inventory
+                  </Link>
+                </li>
+              )}
               <li>
                 <Link href="/dealer/pricing" className="text-muted-foreground hover:text-primary transition-colors">
                   Pricing Plans

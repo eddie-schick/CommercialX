@@ -4,11 +4,21 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { userRouter } from "./routers/user";
+import { profileRouter } from "./routers/profile";
 import * as db from "./db";
+import type {
+  VehicleListing,
+  ListingImage,
+  Vehicle,
+  VehicleConfig,
+  EquipmentConfig,
+  CompleteConfiguration,
+} from "./lib/supabase-types";
 
 export const appRouter = router({
   system: systemRouter,
   user: userRouter,
+  profile: profileRouter,
   
   admin: router({
     vehicleDataStats: protectedProcedure
@@ -160,10 +170,38 @@ export const appRouter = router({
           websiteUrl: z
             .preprocess(
               (val) => {
-                if (val === '' || val === null || val === undefined) return undefined;
+                // Convert empty/null/undefined to undefined
+                if (!val || val === '' || val === null || val === undefined) {
+                  return undefined;
+                }
+                
+                // If it's a string, try to normalize it
+                if (typeof val === 'string') {
+                  const trimmed = val.trim();
+                  if (trimmed === '') return undefined;
+                  
+                  // If it doesn't start with http:// or https://, add https://
+                  let normalized = trimmed;
+                  if (!normalized.match(/^https?:\/\//i)) {
+                    normalized = `https://${normalized}`;
+                  }
+                  
+                  // Try to validate it - if invalid, return undefined to skip it
+                  try {
+                    new URL(normalized);
+                    return normalized;
+                  } catch {
+                    // Invalid URL - skip it by returning undefined
+                    return undefined;
+                  }
+                }
+                
                 return val;
               },
-              z.string().url().optional()
+              z.union([
+                z.string().url(),
+                z.undefined(),
+              ]).optional()
             ),
           makesCarried: z.array(z.string()).optional(),
           specializations: z.array(z.string()).optional(),
@@ -221,11 +259,18 @@ export const appRouter = router({
             throw new Error(`Organization setup failed: ${error.message}`);
           }
 
-          if (!data || data.length === 0) {
+          if (!data) {
             throw new Error('No data returned from organization creation');
           }
 
-          const result = data[0] as {
+          // Handle both array and direct jsonb return
+          const resultData = Array.isArray(data) ? data[0] : data;
+          
+          if (!resultData) {
+            throw new Error('No data returned from organization creation');
+          }
+
+          const result = resultData as {
             organization_id: number;
             dealer_id: number;
             organization_user_id: number;
@@ -278,34 +323,6 @@ export const appRouter = router({
         }
 
         return data || false;
-      }),
-  }),
-
-  // User profile management
-  profile: router({
-    get: protectedProcedure.query(async ({ ctx }) => {
-      return await db.getUserById(ctx.user.id);
-    }),
-    
-    update: protectedProcedure
-      .input(
-        z.object({
-          name: z.string().optional(),
-          phone: z.string().optional(),
-          companyName: z.string().optional(),
-          address: z.string().optional(),
-          city: z.string().optional(),
-          state: z.string().optional(),
-          zipCode: z.string().optional(),
-          bio: z.string().optional(),
-          avatar: z.string().optional(),
-          emailNotifications: z.boolean().optional(),
-          marketingEmails: z.boolean().optional(),
-        })
-      )
-      .mutation(async ({ ctx, input }) => {
-        await db.updateUserProfile(ctx.user.id, input);
-        return { success: true };
       }),
   }),
 
@@ -1005,6 +1022,287 @@ export const appRouter = router({
 
     // Vehicle listings
     listings: router({
+      /**
+       * Get dealer's own listings
+       */
+      list: protectedProcedure
+        .input(
+          z.object({
+            status: z.enum(["draft", "available", "pending", "sold", "archived"]).optional(),
+            limit: z.number().default(50),
+            offset: z.number().default(0),
+          }).optional()
+        )
+        .query(async ({ ctx, input }) => {
+          const { getSupabaseClient } = await import("./_core/supabase");
+          const { querySchemaTable } = await import("./lib/supabase-db");
+          const supabase = getSupabaseClient();
+
+          // Get dealer ID from context
+          let dealerId: number | null = null;
+          
+          if (ctx.supabaseUser) {
+            // Get dealer ID from Supabase user
+            const { data, error } = await supabase.rpc('get_user_dealer_id');
+            if (!error && data) {
+              dealerId = data;
+            }
+          } else if (ctx.user) {
+            // Get dealer ID from OAuth user
+            const profile = await db.getUserById(ctx.user.id);
+            if (profile?.companyId) {
+              const dealers = await querySchemaTable<{ id: number }>(
+                "02a. Dealership",
+                "dealers",
+                {
+                  where: { organization_id: profile.companyId },
+                  limit: 1,
+                }
+              );
+              if (dealers.length > 0) {
+                dealerId = dealers[0].id;
+              }
+            }
+          }
+
+          if (!dealerId) {
+            throw new Error("Dealer record not found");
+          }
+
+          // Query listings for this dealer
+          const whereClause: Record<string, any> = { dealer_id: dealerId };
+          if (input?.status) {
+            whereClause.status = input.status;
+          }
+
+          const listings = await querySchemaTable<VehicleListing>(
+            "02a. Dealership",
+            "vehicle_listings",
+            {
+              where: whereClause,
+              orderBy: { column: "created_at", ascending: false },
+              limit: input?.limit || 50,
+              offset: input?.offset || 0,
+            }
+          );
+
+          // Enrich with vehicle and configuration data
+          const enrichedListings = await Promise.all(
+            listings.map(async (listing) => {
+              // Get complete configuration
+              const configs = await querySchemaTable<CompleteConfiguration>(
+                "05. Completed Unit Configuration",
+                "complete_configurations",
+                {
+                  where: { id: listing.complete_configuration_id },
+                  limit: 1,
+                }
+              );
+
+              if (configs.length === 0) {
+                return { ...listing, vehicle: null, config: null };
+              }
+
+              const config = configs[0];
+
+              // Get vehicle config
+              const vehicleConfigs = await querySchemaTable<VehicleConfig>(
+                "03. Vehicle Data",
+                "vehicle_config",
+                {
+                  where: { id: config.vehicle_config_id },
+                  limit: 1,
+                }
+              );
+
+              if (vehicleConfigs.length === 0) {
+                return { ...listing, vehicle: null, config };
+              }
+
+              const vehicleConfig = vehicleConfigs[0];
+
+              // Get vehicle
+              const vehicles = await querySchemaTable<Vehicle>(
+                "03. Vehicle Data",
+                "vehicle",
+                {
+                  where: { id: vehicleConfig.vehicle_id },
+                  limit: 1,
+                }
+              );
+
+              const vehicle = vehicles.length > 0 ? vehicles[0] : null;
+
+              // Get images
+              const images = await querySchemaTable<ListingImage>(
+                "02a. Dealership",
+                "listing_images",
+                {
+                  where: { listing_id: listing.id },
+                  orderBy: { column: "sort_order", ascending: true },
+                }
+              );
+
+              return {
+                ...listing,
+                vehicle,
+                vehicleConfig,
+                config,
+                images: images.map(img => ({
+                  id: img.id,
+                  url: img.image_url,
+                  sortOrder: img.sort_order,
+                  isPrimary: img.is_primary,
+                })),
+              };
+            })
+          );
+
+          return enrichedListings;
+        }),
+
+      /**
+       * Get single listing by ID (dealer must own it)
+       */
+      getById: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .query(async ({ ctx, input }) => {
+          const { getSupabaseClient } = await import("./_core/supabase");
+          const { querySchemaTable } = await import("./lib/supabase-db");
+          const supabase = getSupabaseClient();
+
+          // Get dealer ID from context
+          let dealerId: number | null = null;
+          
+          if (ctx.supabaseUser) {
+            const { data, error } = await supabase.rpc('get_user_dealer_id');
+            if (!error && data) {
+              dealerId = data;
+            }
+          } else if (ctx.user) {
+            const profile = await db.getUserById(ctx.user.id);
+            if (profile?.companyId) {
+              const dealers = await querySchemaTable<{ id: number }>(
+                "02a. Dealership",
+                "dealers",
+                {
+                  where: { organization_id: profile.companyId },
+                  limit: 1,
+                }
+              );
+              if (dealers.length > 0) {
+                dealerId = dealers[0].id;
+              }
+            }
+          }
+
+          if (!dealerId) {
+            throw new Error("Dealer record not found");
+          }
+
+          // Get listing
+          const listings = await querySchemaTable<VehicleListing>(
+            "02a. Dealership",
+            "vehicle_listings",
+            {
+              where: { id: input.id, dealer_id: dealerId },
+              limit: 1,
+            }
+          );
+
+          if (listings.length === 0) {
+            throw new Error("Listing not found or unauthorized");
+          }
+
+          const listing = listings[0];
+
+          // Get complete configuration
+          const configs = await querySchemaTable<CompleteConfiguration>(
+            "05. Completed Unit Configuration",
+            "complete_configurations",
+            {
+              where: { id: listing.complete_configuration_id },
+              limit: 1,
+            }
+          );
+
+          if (configs.length === 0) {
+            throw new Error("Configuration not found");
+          }
+
+          const config = configs[0];
+
+          // Get vehicle config
+          const vehicleConfigs = await querySchemaTable<VehicleConfig>(
+            "03. Vehicle Data",
+            "vehicle_config",
+            {
+              where: { id: config.vehicle_config_id },
+              limit: 1,
+            }
+          );
+
+          if (vehicleConfigs.length === 0) {
+            throw new Error("Vehicle config not found");
+          }
+
+          const vehicleConfig = vehicleConfigs[0];
+
+          // Get vehicle
+          const vehicles = await querySchemaTable<Vehicle>(
+            "03. Vehicle Data",
+            "vehicle",
+            {
+              where: { id: vehicleConfig.vehicle_id },
+              limit: 1,
+            }
+          );
+
+          if (vehicles.length === 0) {
+            throw new Error("Vehicle not found");
+          }
+
+          const vehicle = vehicles[0];
+
+          // Get equipment config if exists
+          let equipmentConfig = null;
+          if (config.equipment_config_id) {
+            const equipmentConfigs = await querySchemaTable<EquipmentConfig>(
+              "04. Equipment Data",
+              "equipment_config",
+              {
+                where: { id: config.equipment_config_id },
+                limit: 1,
+              }
+            );
+            equipmentConfig = equipmentConfigs.length > 0 ? equipmentConfigs[0] : null;
+          }
+
+          // Get images
+          const images = await querySchemaTable<ListingImage>(
+            "02a. Dealership",
+            "listing_images",
+            {
+              where: { listing_id: listing.id },
+              orderBy: { column: "sort_order", ascending: true },
+            }
+          );
+
+          return {
+            ...listing,
+            vehicle,
+            vehicleConfig,
+            equipmentConfig,
+            config,
+            images: images.map(img => ({
+              id: img.id,
+              url: img.image_url,
+              sortOrder: img.sort_order,
+              isPrimary: img.is_primary,
+            })),
+          };
+        }),
+
       create: protectedProcedure
         .input(
           z.object({
@@ -1060,8 +1358,12 @@ export const appRouter = router({
           )
         )
         .mutation(async ({ ctx, input }) => {
-          if (ctx.user.role !== "dealer" && ctx.user.role !== "admin") {
-            throw new Error("Unauthorized");
+          // Check if user is dealer or admin (support both OAuth and Supabase auth)
+          const isDealer = ctx.user?.role === "dealer" || ctx.user?.role === "admin";
+          const isSupabaseUser = !!ctx.supabaseUser;
+          
+          if (!isDealer && !isSupabaseUser) {
+            throw new Error("Unauthorized: Dealer access required");
           }
 
           const { createListingFromDealerInput } = await import("./lib/database/smart-routing");
@@ -1070,32 +1372,36 @@ export const appRouter = router({
 
           const supabase = getSupabaseClient();
           
-          // Get user's organization_id from Supabase auth
-          // For now, we'll need to get dealer_id from organization
-          // This assumes the user has an organization_id in their profile
-          const profile = await db.getUserById(ctx.user.id);
-          if (!profile?.companyId) {
-            throw new Error("No company associated with user");
-          }
-
-          // Get dealer_id from organization_id
-          // Assuming companyId maps to organization_id
-          const dealers = await querySchemaTable<{ id: number }>(
-            "02a. Dealership",
-            "dealers",
-            {
-              where: {
-                organization_id: profile.companyId,
-              },
-              limit: 1,
+          // Get dealer ID from context
+          let dealerId: number | null = null;
+          
+          if (ctx.supabaseUser) {
+            // Get dealer ID from Supabase user
+            const { data, error } = await supabase.rpc('get_user_dealer_id');
+            if (!error && data) {
+              dealerId = data;
             }
-          );
-
-          if (dealers.length === 0) {
-            throw new Error("Dealer record not found for this organization");
+          } else if (ctx.user) {
+            // Get dealer ID from OAuth user
+            const profile = await db.getUserById(ctx.user.id);
+            if (profile?.companyId) {
+              const dealers = await querySchemaTable<{ id: number }>(
+                "02a. Dealership",
+                "dealers",
+                {
+                  where: { organization_id: profile.companyId },
+                  limit: 1,
+                }
+              );
+              if (dealers.length > 0) {
+                dealerId = dealers[0].id;
+              }
+            }
           }
 
-          const dealerId = dealers[0].id;
+          if (!dealerId) {
+            throw new Error("Dealer record not found for this user");
+          }
 
           // Check if VIN was decoded (get enriched data from cache)
           let enrichedData: any = null;
@@ -1109,10 +1415,261 @@ export const appRouter = router({
           const result = await createListingFromDealerInput(supabase, dealerId, input, enrichedData);
 
           if (!result.success) {
-            throw new Error(result.errors?.join(", ") || "Failed to create listing");
+            // Provide more user-friendly error messages
+            const errorMessages = result.errors || [];
+            let userMessage = "Failed to create listing";
+            
+            if (errorMessages.length > 0) {
+              // Map technical errors to user-friendly messages
+              const friendlyMessages = errorMessages.map(err => {
+                if (err.includes("Dealer record not found")) {
+                  return "Your dealer account is not set up. Please contact support.";
+                }
+                if (err.includes("organization")) {
+                  return "Organization setup issue. Please contact support.";
+                }
+                if (err.includes("permission")) {
+                  return "You don't have permission to create listings. Please contact your organization administrator.";
+                }
+                if (err.includes("VIN") || err.includes("vin")) {
+                  return "There was an issue processing the VIN. Please verify the VIN is correct.";
+                }
+                if (err.includes("vehicle") || err.includes("Vehicle")) {
+                  return "There was an issue creating the vehicle record. Please try again.";
+                }
+                if (err.includes("equipment") || err.includes("Equipment")) {
+                  return "There was an issue processing the equipment information. Please check your equipment details.";
+                }
+                if (err.includes("compatibility") || err.includes("Compatibility")) {
+                  return "The vehicle and equipment combination may not be compatible. Please review your specifications.";
+                }
+                return err;
+              });
+              
+              userMessage = friendlyMessages.join(". ");
+            }
+            
+            throw new Error(userMessage);
           }
 
           return result;
+        }),
+
+      /**
+       * Update existing listing
+       */
+      update: protectedProcedure
+        .input(
+          z.object({
+            id: z.number(),
+            askingPrice: z.number().positive().optional(),
+            specialPrice: z.number().positive().optional(),
+            stockNumber: z.string().optional(),
+            condition: z.enum(["new", "used", "certified_pre_owned", "demo"]).optional(),
+            mileage: z.number().nonnegative().optional(),
+            exteriorColor: z.string().optional(),
+            interiorColor: z.string().optional(),
+            description: z.string().optional(),
+            locationCity: z.string().optional(),
+            locationState: z.string().optional(),
+            status: z.enum(["draft", "available", "pending", "sold", "archived"]).optional(),
+            photos: z.array(z.string().url()).optional(),
+          })
+          .refine(
+            (data) => {
+              // Special price must be less than asking price if both are provided
+              if (data.specialPrice && data.askingPrice) {
+                return data.specialPrice < data.askingPrice;
+              }
+              return true;
+            },
+            {
+              message: "Special price must be less than asking price",
+              path: ["specialPrice"],
+            }
+          )
+          // Note: Mileage validation for used vehicles is handled in the mutation
+          // since we need to check the existing listing's condition
+        )
+        .mutation(async ({ ctx, input }) => {
+          const { getSupabaseClient } = await import("./_core/supabase");
+          const { querySchemaTable, updateSchemaTable, deleteSchemaTable } = await import("./lib/supabase-db");
+          const supabase = getSupabaseClient();
+
+          // Get dealer ID from context
+          let dealerId: number | null = null;
+          
+          if (ctx.supabaseUser) {
+            const { data, error } = await supabase.rpc('get_user_dealer_id');
+            if (!error && data) {
+              dealerId = data;
+            }
+          } else if (ctx.user) {
+            const profile = await db.getUserById(ctx.user.id);
+            if (profile?.companyId) {
+              const dealers = await querySchemaTable<{ id: number }>(
+                "02a. Dealership",
+                "dealers",
+                {
+                  where: { organization_id: profile.companyId },
+                  limit: 1,
+                }
+              );
+              if (dealers.length > 0) {
+                dealerId = dealers[0].id;
+              }
+            }
+          }
+
+          if (!dealerId) {
+            throw new Error("Dealer record not found");
+          }
+
+          // Verify listing belongs to dealer
+          const listings = await querySchemaTable<VehicleListing>(
+            "02a. Dealership",
+            "vehicle_listings",
+            {
+              where: { id: input.id, dealer_id: dealerId },
+              limit: 1,
+            }
+          );
+
+          if (listings.length === 0) {
+            throw new Error("Listing not found or unauthorized");
+          }
+
+          const existingListing = listings[0];
+
+          // Validate mileage if condition is being changed to used
+          if (input.condition && 
+              (input.condition === "used" || input.condition === "certified_pre_owned") &&
+              input.mileage === undefined && 
+              existingListing.condition !== "used") {
+            throw new Error("Mileage is required when setting condition to used or certified pre-owned");
+          }
+
+          // Validate special price is less than asking price
+          const askingPrice = input.askingPrice ?? existingListing.asking_price;
+          if (input.specialPrice && askingPrice && input.specialPrice >= askingPrice) {
+            throw new Error("Special price must be less than asking price");
+          }
+
+          // Prepare update data
+          const updateData: Record<string, any> = {};
+          if (input.askingPrice !== undefined) updateData.asking_price = input.askingPrice;
+          if (input.specialPrice !== undefined) updateData.special_price = input.specialPrice;
+          if (input.stockNumber !== undefined) updateData.stock_number = input.stockNumber;
+          if (input.condition !== undefined) {
+            updateData.condition = input.condition === "certified_pre_owned" ? "used" : input.condition;
+          }
+          if (input.mileage !== undefined) updateData.mileage = input.mileage;
+          if (input.exteriorColor !== undefined) updateData.exterior_color = input.exteriorColor;
+          if (input.interiorColor !== undefined) updateData.interior_color = input.interiorColor;
+          if (input.description !== undefined) updateData.description = input.description;
+          if (input.locationCity !== undefined) updateData.location_city = input.locationCity;
+          if (input.locationState !== undefined) updateData.location_state = input.locationState;
+          if (input.status !== undefined) updateData.status = input.status;
+
+          // Update listing
+          await updateSchemaTable(
+            "02a. Dealership",
+            "vehicle_listings",
+            updateData,
+            { id: input.id }
+          );
+
+          // Update images if provided
+          if (input.photos !== undefined) {
+            const { insertSchemaTable } = await import("./lib/supabase-db");
+            
+            // Delete existing images
+            await deleteSchemaTable(
+              "02a. Dealership",
+              "listing_images",
+              { listing_id: input.id }
+            );
+
+            // Insert new images
+            for (let i = 0; i < input.photos.length; i++) {
+              await insertSchemaTable(
+                "02a. Dealership",
+                "listing_images",
+                {
+                  listing_id: input.id,
+                  image_url: input.photos[i],
+                  sort_order: i,
+                  is_primary: i === 0,
+                }
+              );
+            }
+          }
+
+          return { success: true };
+        }),
+
+      /**
+       * Delete (soft delete) listing
+       */
+      delete: protectedProcedure
+        .input(z.object({ id: z.number() }))
+        .mutation(async ({ ctx, input }) => {
+          const { getSupabaseClient } = await import("./_core/supabase");
+          const { querySchemaTable, updateSchemaTable } = await import("./lib/supabase-db");
+          const supabase = getSupabaseClient();
+
+          // Get dealer ID from context
+          let dealerId: number | null = null;
+          
+          if (ctx.supabaseUser) {
+            const { data, error } = await supabase.rpc('get_user_dealer_id');
+            if (!error && data) {
+              dealerId = data;
+            }
+          } else if (ctx.user) {
+            const profile = await db.getUserById(ctx.user.id);
+            if (profile?.companyId) {
+              const dealers = await querySchemaTable<{ id: number }>(
+                "02a. Dealership",
+                "dealers",
+                {
+                  where: { organization_id: profile.companyId },
+                  limit: 1,
+                }
+              );
+              if (dealers.length > 0) {
+                dealerId = dealers[0].id;
+              }
+            }
+          }
+
+          if (!dealerId) {
+            throw new Error("Dealer record not found");
+          }
+
+          // Verify listing belongs to dealer
+          const listings = await querySchemaTable<VehicleListing>(
+            "02a. Dealership",
+            "vehicle_listings",
+            {
+              where: { id: input.id, dealer_id: dealerId },
+              limit: 1,
+            }
+          );
+
+          if (listings.length === 0) {
+            throw new Error("Listing not found or unauthorized");
+          }
+
+          // Soft delete by setting status to archived
+          await updateSchemaTable(
+            "02a. Dealership",
+            "vehicle_listings",
+            { status: "archived" },
+            { id: input.id }
+          );
+
+          return { success: true };
         }),
     }),
   }),
@@ -1126,6 +1683,8 @@ export const appRouter = router({
         const { apiCache, CACHE_KEYS } = await import("./lib/utils/api-cache");
         
         const { vin } = input;
+        
+        console.log(`[VIN Decode] Starting decode for VIN: ${vin}`);
         
         // Check cache first
         const cacheKey = CACHE_KEYS.nhtsa(vin);
@@ -1141,7 +1700,15 @@ export const appRouter = router({
         
         try {
           // Get enriched data from both NHTSA + EPA
+          console.log(`[VIN Decode] Fetching data from NHTSA/EPA for VIN: ${vin}`);
           const enrichedData = await enrichVehicleData(vin);
+          
+          // Validate that we got at least basic data
+          if (!enrichedData || !enrichedData.year || !enrichedData.make || !enrichedData.model) {
+            throw new Error('Incomplete data returned from VIN decoder. Missing required fields (year, make, model).');
+          }
+          
+          console.log(`[VIN Decode] Successfully decoded VIN: ${vin} - ${enrichedData.year} ${enrichedData.make} ${enrichedData.model}`);
           
           // Cache the result (60 day TTL - VIN data doesn't change)
           apiCache.set(cacheKey, enrichedData, 60 * 24 * 60); // 60 days
@@ -1153,10 +1720,27 @@ export const appRouter = router({
           };
           
         } catch (error: any) {
-          console.error('VIN enrichment error:', error);
+          console.error('[VIN Decode] Error:', error);
+          console.error('[VIN Decode] Error stack:', error.stack);
+          console.error('[VIN Decode] Error details:', {
+            message: error.message,
+            name: error.name,
+            vin: vin,
+          });
+          
+          // Provide more helpful error messages
+          let errorMessage = 'Failed to decode VIN';
+          if (error.message) {
+            errorMessage = error.message;
+          } else if (error.response) {
+            errorMessage = `API error: ${error.response.status} ${error.response.statusText}`;
+          } else if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+            errorMessage = 'Unable to connect to VIN decoder service. Please check your internet connection.';
+          }
+          
           return {
             success: false,
-            error: error.message || 'Failed to decode VIN',
+            error: errorMessage,
             data: null,
           };
         }

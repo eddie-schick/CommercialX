@@ -151,8 +151,28 @@ export async function updateSchemaTable<T = any>(
   let paramIndex = 1;
 
   for (const [key, value] of Object.entries(data)) {
-    setClauses.push(`${key} = $${paramIndex}`);
-    params.push(value);
+    // Handle JSONB fields - postgres client should handle JSON automatically
+    // but we need to ensure objects/arrays are properly serialized
+    if (value !== null && value !== undefined) {
+      if (typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+        // Plain object - likely JSONB field (like business_hours)
+        // Postgres client should handle JSON.stringify automatically, but we'll be explicit
+        setClauses.push(`${key} = $${paramIndex}`);
+        params.push(JSON.stringify(value));
+      } else if (Array.isArray(value)) {
+        // Array - likely JSONB array (like sales_territory_states)
+        setClauses.push(`${key} = $${paramIndex}`);
+        params.push(JSON.stringify(value));
+      } else {
+        // Primitive value
+        setClauses.push(`${key} = $${paramIndex}`);
+        params.push(value);
+      }
+    } else {
+      // null or undefined
+      setClauses.push(`${key} = $${paramIndex}`);
+      params.push(null);
+    }
     paramIndex++;
   }
 

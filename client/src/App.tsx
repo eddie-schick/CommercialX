@@ -29,6 +29,8 @@ import DealerAnalytics from "./pages/dealer/Analytics";
 import DealerSettings from "./pages/dealer/Settings";
 import BulkOperations from "./pages/dealer/BulkOperations";
 import CreateListing from "./pages/dealer/CreateListing";
+import ListingDetail from "./pages/dealer/ListingDetail";
+import EditListing from "./pages/dealer/EditListing";
 import DataQualityDashboard from "./pages/admin/DataQualityDashboard";
 import Signup from "./pages/Signup";
 import Login from "./pages/Login";
@@ -43,10 +45,13 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/verify-email" component={VerifyEmail} />
       <Route path="/setup-organization" component={SetupOrganization} />
+      <Route path="/onboarding/organization" component={SetupOrganization} />
        <Route path="/profile" component={Profile} />
       <Route path="/dealer" component={DealerDashboard} />
       <Route path="/dealer/vehicles" component={DealerVehiclesList} />
       <Route path="/dealer/listings/new" component={CreateListing} />
+      <Route path="/dealer/listings/:id/edit" component={EditListing} />
+      <Route path="/dealer/listings/:id" component={ListingDetail} />
       <Route path="/dealer/bodies" component={DealerBodiesList} />
       <Route path="/dealer/bodies/new" component={BodyForm} />
       <Route path="/dealer/bodies/:id" component={BodyForm} />

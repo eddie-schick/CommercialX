@@ -1,5 +1,6 @@
-import { useAuth } from "@/_core/hooks/useAuth";
-import { APP_LOGO, APP_TITLE, getLoginUrl } from "@/const";
+import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { getSupabaseClient } from "@/lib/supabase";
+import { APP_LOGO, APP_TITLE } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
 import {
@@ -33,12 +34,24 @@ const navigation = [
 ];
 
 export default function DealerDashboardLayout({ children }: DealerDashboardLayoutProps) {
-  const { user, loading, isAuthenticated, logout } = useAuth();
+  const { user, profile, loading } = useCurrentUser();
   const [location] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Check if user is dealer or admin
-  const hasAccess = user?.role === "dealer" || user?.role === "admin";
+  const handleLogout = async () => {
+    try {
+      const supabase = getSupabaseClient();
+      await supabase.auth.signOut();
+      window.location.href = '/login';
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
+  // Get user display name from Supabase Auth user metadata or email
+  const userName = user?.user_metadata?.name || user?.email?.split('@')[0] || "Guest User";
+  // During onboarding or when profile is loading, show a more appropriate message
+  const userRole = profile?.role || (loading ? "Loading..." : "Setting up...");
 
   // TEMPORARILY BYPASSED: Authentication checks disabled for development
   // TODO: Re-enable authentication checks before production
@@ -153,12 +166,12 @@ export default function DealerDashboardLayout({ children }: DealerDashboardLayou
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-900 truncate">
-                  {user?.name || "Guest User"}
+                  {userName}
                 </p>
-                <p className="text-xs text-gray-500 capitalize">{user?.role || "guest"}</p>
+                <p className="text-xs text-gray-500 capitalize">{userRole}</p>
               </div>
             </div>
-            {isAuthenticated && user && (
+            {user && (
               <div className="space-y-1">
                 <Link
                   href="/profile"
@@ -168,7 +181,7 @@ export default function DealerDashboardLayout({ children }: DealerDashboardLayou
                   Profile Settings
                 </Link>
                 <button
-                  onClick={() => logout()}
+                  onClick={handleLogout}
                   className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg"
                 >
                   <LogOut className="h-4 w-4" />

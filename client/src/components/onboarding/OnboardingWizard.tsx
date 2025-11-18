@@ -18,6 +18,7 @@ const STEPS = [
   { id: 3, title: 'Location', description: 'Contact information' },
   { id: 4, title: 'Specialization', description: 'Makes and services' },
   { id: 5, title: 'Subscription', description: 'Choose your plan' },
+  { id: 6, title: 'Add Vehicle', description: 'Add your first vehicle (optional)' },
 ];
 
 const BUSINESS_TYPES = [
@@ -41,15 +42,40 @@ const SPECIALIZATIONS = [
   { value: 'buses', label: 'Buses' },
 ];
 
+const STORAGE_KEY = 'commercialx:onboarding-data';
+const STEP_STORAGE_KEY = 'commercialx:onboarding-step';
+
 export function OnboardingWizard() {
   const [, setLocation] = useLocation();
   const { user, refetch: refetchUser } = useCurrentUser();
-  const [currentStep, setCurrentStep] = useState(1);
+  
+  // Load saved progress from localStorage
+  const loadSavedProgress = () => {
+    try {
+      const savedData = localStorage.getItem(STORAGE_KEY);
+      const savedStep = localStorage.getItem(STEP_STORAGE_KEY);
+      if (savedData) {
+        return {
+          data: JSON.parse(savedData),
+          step: savedStep ? parseInt(savedStep, 10) : 1,
+        };
+      }
+    } catch (error) {
+      console.error('Error loading saved progress:', error);
+    }
+    return { data: null, step: 1 };
+  };
+
+  const { data: savedData, step: savedStep } = loadSavedProgress();
+  
+  const [currentStep, setCurrentStep] = useState(savedStep);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [availableMakes, setAvailableMakes] = useState<string[]>([]);
   const [makesLoading, setMakesLoading] = useState(true);
   const [makesSearchQuery, setMakesSearchQuery] = useState('');
+  const [organizationCreated, setOrganizationCreated] = useState(false);
+  const [skipVehicleOnboarding, setSkipVehicleOnboarding] = useState(false);
 
   // Fetch makes from NHTSA
   const getMakes = trpc.nhtsa.getMakes.useQuery(
@@ -74,7 +100,7 @@ export function OnboardingWizard() {
     }
   }, [getMakes.data, getMakes.isError]);
 
-  // Form data state
+  // Form data state - load from localStorage if available
   const [formData, setFormData] = useState<Partial<CreateDealerOrganizationInput>>({
     businessType: 'independent_dealer',
     hasServiceDepartment: false,
@@ -82,12 +108,42 @@ export function OnboardingWizard() {
     canInstallUpfits: false,
     makesCarried: [],
     specializations: [],
+    ...(savedData || {}),
   });
 
   const setupOrganization = trpc.auth.setupOrganization.useMutation();
 
+  // Save to localStorage whenever form data changes
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(formData));
+      localStorage.setItem(STEP_STORAGE_KEY, currentStep.toString());
+    } catch (error) {
+      console.error('Error saving progress:', error);
+    }
+  }, [formData, currentStep]);
+
   const updateFormData = (field: keyof CreateDealerOrganizationInput, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const updated = { ...prev, [field]: value };
+      // Auto-save to localStorage
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      } catch (error) {
+        console.error('Error saving form data:', error);
+      }
+      return updated;
+    });
+  };
+
+  // Clear saved progress after successful submission
+  const clearSavedProgress = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STEP_STORAGE_KEY);
+    } catch (error) {
+      console.error('Error clearing saved progress:', error);
+    }
   };
 
   const nextStep = () => {
@@ -148,13 +204,15 @@ export function OnboardingWizard() {
       console.log('✅ Organization created:', result);
       toast.success('Organization created successfully!');
       
+      // Clear saved progress
+      clearSavedProgress();
+      
       // Refetch user profile
       await refetchUser();
       
-      // Redirect to dealer dashboard
-      setTimeout(() => {
-        setLocation('/dealer');
-      }, 1500);
+      // Mark organization as created and move to vehicle onboarding step
+      setOrganizationCreated(true);
+      setCurrentStep(6); // Move to vehicle onboarding step
 
     } catch (err: any) {
       console.error('Organization setup error:', err);
@@ -604,6 +662,87 @@ export function OnboardingWizard() {
                 ) : (
                   'Create Organization'
                 )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Step 6: Vehicle Onboarding (optional, only shown after organization is created)
+  if (currentStep === 6 && organizationCreated) {
+    const handleSkipVehicle = () => {
+      setSkipVehicleOnboarding(true);
+      // Redirect to dealer dashboard
+      setTimeout(() => {
+        setLocation('/dealer');
+      }, 500);
+    };
+
+    const handleAddVehicle = () => {
+      // Redirect to vehicle creation page
+      setLocation('/dealer/listings/new?onboarding=true');
+    };
+
+    return (
+      <div className="max-w-2xl mx-auto p-6">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between mb-4">
+              <CardTitle className="text-2xl">Add Your First Vehicle</CardTitle>
+              <div className="text-sm text-muted-foreground">
+                Step {currentStep} of {STEPS.length} (Optional)
+              </div>
+            </div>
+            <Progress value={progress} className="h-2" />
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
+              <h3 className="font-semibold mb-2 text-primary">🎉 Organization Setup Complete!</h3>
+              <p className="text-sm text-muted-foreground">
+                Your organization <strong>{formData.organizationName}</strong> has been created successfully.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-semibold mb-2">Ready to list your first vehicle?</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  You can add your first vehicle listing now, or skip this step and add vehicles later from your dashboard.
+                </p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <Card className="border-2 hover:border-primary/50 transition-colors cursor-pointer" onClick={handleAddVehicle}>
+                  <CardContent className="p-6 text-center">
+                    <div className="text-4xl mb-3">🚗</div>
+                    <h4 className="font-semibold mb-2">Add Vehicle Now</h4>
+                    <p className="text-sm text-muted-foreground">
+                      Create your first vehicle listing to get started
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-2 hover:border-muted-foreground/50 transition-colors cursor-pointer" onClick={handleSkipVehicle}>
+                  <CardContent className="p-6 text-center">
+                    <div className="text-4xl mb-3">⏭️</div>
+                    <h4 className="font-semibold mb-2">Skip for Now</h4>
+                    <p className="text-sm text-muted-foreground">
+                      Go to your dashboard and add vehicles later
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+
+            <div className="flex justify-between pt-4 border-t">
+              <Button variant="outline" onClick={handleSkipVehicle}>
+                Skip
+              </Button>
+              <Button onClick={handleAddVehicle} className="bg-primary hover:bg-primary/90">
+                Add Vehicle
+                <ChevronRight className="ml-2 h-4 w-4" />
               </Button>
             </div>
           </CardContent>

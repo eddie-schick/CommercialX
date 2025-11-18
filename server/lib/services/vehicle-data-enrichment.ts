@@ -134,15 +134,28 @@ export async function enrichVehicleData(
   // Step 1: Get NHTSA data (required)
   let nhtsaData: NHTSAVehicleData;
   try {
+    console.log(`[Enrichment] Decoding VIN from NHTSA: ${vin}`);
     nhtsaData = await decodeVINFromNHTSA(vin);
+    console.log(`[Enrichment] NHTSA decode successful, enriching data...`);
     nhtsaData = enrichNHTSAData(nhtsaData);
     dataSources.push('nhtsa');
+    console.log(`[Enrichment] NHTSA data enriched:`, {
+      year: nhtsaData.year,
+      make: nhtsaData.make,
+      model: nhtsaData.model,
+    });
   } catch (error: any) {
-    throw new Error(`NHTSA VIN decode failed: ${error.message}`);
+    console.error(`[Enrichment] NHTSA decode failed:`, error);
+    throw new Error(`NHTSA VIN decode failed: ${error.message || 'Unknown error'}`);
   }
   
   // Validate required fields
   if (!nhtsaData.year || !nhtsaData.make || !nhtsaData.model) {
+    console.error(`[Enrichment] Missing required fields:`, {
+      year: nhtsaData.year,
+      make: nhtsaData.make,
+      model: nhtsaData.model,
+    });
     throw new Error('NHTSA data missing required fields (year, make, model)');
   }
   

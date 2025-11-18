@@ -15,9 +15,18 @@ const listingSchema = z.object({
   series: z.string().optional(),
   bodyStyle: z.string().optional(),
   fuelType: z.enum(["gasoline", "diesel", "electric", "hybrid", "cng", "propane"]),
-  wheelbase: z.number().positive().optional(),
-  gvwr: z.number().positive().optional(),
-  payload: z.number().positive().optional(),
+  wheelbase: z.preprocess(
+    (val) => (typeof val === 'number' && isNaN(val)) ? undefined : val,
+    z.number().positive().optional()
+  ),
+  gvwr: z.preprocess(
+    (val) => (typeof val === 'number' && isNaN(val)) ? undefined : val,
+    z.number().positive().optional()
+  ),
+  payload: z.preprocess(
+    (val) => (typeof val === 'number' && isNaN(val)) ? undefined : val,
+    z.number().positive().optional()
+  ),
   engineDescription: z.string().optional(),
   transmission: z.string().optional(),
   driveType: z.enum(["RWD", "AWD", "4WD", "FWD"]).optional(),
@@ -92,10 +101,20 @@ const STEPS = [
   { id: 5, title: "Review & Submit" },
 ];
 
-export function CreateListingForm() {
+interface CreateListingFormProps {
+  isOnboarding?: boolean;
+}
+
+export function CreateListingForm({ isOnboarding = false }: CreateListingFormProps) {
   const [currentStep, setCurrentStep] = React.useState(0);
+  // Use ref to track step and prevent reset during VIN decode
+  const currentStepRef = React.useRef(0);
+  React.useEffect(() => {
+    currentStepRef.current = currentStep;
+  }, [currentStep]);
+  
   const [, setLocation] = useLocation();
-  const { profile, permissions, dealerId, loading: userLoading } = useCurrentUser();
+  const { user, profile, permissions, dealerId, loading: userLoading, refetch: refetchUser } = useCurrentUser();
   const [equipmentOptions, setEquipmentOptions] = React.useState<Array<{ value: string; label: string }>>([]);
   // Track which fields were populated from VIN decode
   const [decodedFields, setDecodedFields] = React.useState<Set<string>>(new Set());
@@ -136,9 +155,18 @@ export function CreateListingForm() {
   }, [vin]);
 
   const createListing = trpc.dealer.listings.create.useMutation({
-    onSuccess: (data) => {
-      toast.success("Listing created successfully!");
-      setLocation(`/dealer/listings/${data.listingId}?success=true`);
+    onSuccess: async (data) => {
+      if (isOnboarding) {
+        toast.success("🎉 Your first vehicle has been added! Welcome to CommercialX!");
+        // During onboarding, skip refetch to avoid refresh - just redirect
+        // The profile will be loaded fresh on the dashboard page
+        setTimeout(() => {
+          window.location.href = "/dealer?onboarding_complete=true";
+        }, 1000);
+      } else {
+        toast.success("Listing created successfully!");
+        setLocation(`/dealer/listings/${data.listingId}?success=true`);
+      }
     },
     onError: (error) => {
       toast.error(error.message || "Failed to create listing");
@@ -147,6 +175,9 @@ export function CreateListingForm() {
 
   const handleVINDecode = (decodedData: any) => {
     const fieldsToMark: string[] = [];
+    
+    // Preserve current step - prevent form validation from resetting it
+    const preservedStep = currentStepRef.current;
     
     // Store enriched data for preview
     setEnrichedData({
@@ -157,161 +188,245 @@ export function CreateListingForm() {
     });
     
     // Set and track fields that were populated from VIN decode
+    // Use shouldValidate: false to prevent validation from triggering during decode
+    // This prevents the form from resetting or causing side effects
+    const setValueOptions = { shouldValidate: false, shouldDirty: false };
+    
     if (decodedData.year !== undefined && decodedData.year !== null) {
-      form.setValue("year", decodedData.year);
+      form.setValue("year", decodedData.year, setValueOptions);
       fieldsToMark.push("year");
     }
     if (decodedData.make) {
-      form.setValue("make", decodedData.make);
+      form.setValue("make", decodedData.make, setValueOptions);
       fieldsToMark.push("make");
     }
     if (decodedData.model) {
-      form.setValue("model", decodedData.model);
+      form.setValue("model", decodedData.model, setValueOptions);
       fieldsToMark.push("model");
     }
     if (decodedData.series) {
-      form.setValue("series", decodedData.series);
+      form.setValue("series", decodedData.series, setValueOptions);
       fieldsToMark.push("series");
     }
     if (decodedData.trim) {
-      form.setValue("series", decodedData.trim); // Use trim as series if series not available
+      form.setValue("series", decodedData.trim, setValueOptions); // Use trim as series if series not available
       if (!decodedData.series) fieldsToMark.push("series");
     }
     if (decodedData.bodyStyle || decodedData.bodyClass) {
-      form.setValue("bodyStyle", decodedData.bodyStyle || decodedData.bodyClass || '');
+      form.setValue("bodyStyle", decodedData.bodyStyle || decodedData.bodyClass || '', setValueOptions);
       fieldsToMark.push("bodyStyle");
     }
     if (decodedData.fuelTypePrimary) {
-      form.setValue("fuelType", decodedData.fuelTypePrimary as any);
+      form.setValue("fuelType", decodedData.fuelTypePrimary as any, setValueOptions);
       fieldsToMark.push("fuelType");
     }
     if (decodedData.wheelbase !== undefined && decodedData.wheelbase !== null) {
-      form.setValue("wheelbase", decodedData.wheelbase);
+      form.setValue("wheelbase", decodedData.wheelbase, setValueOptions);
       fieldsToMark.push("wheelbase");
     }
     if (decodedData.gvwr !== undefined && decodedData.gvwr !== null) {
-      form.setValue("gvwr", decodedData.gvwr);
+      form.setValue("gvwr", decodedData.gvwr, setValueOptions);
       fieldsToMark.push("gvwr");
     }
     if (decodedData.payloadCapacity !== undefined && decodedData.payloadCapacity !== null) {
-      form.setValue("payload", decodedData.payloadCapacity);
+      form.setValue("payload", decodedData.payloadCapacity, setValueOptions);
       fieldsToMark.push("payload");
     }
     if (decodedData.engineDescription || decodedData.engineModel) {
-      form.setValue("engineDescription", decodedData.engineDescription || decodedData.engineModel || '');
+      form.setValue("engineDescription", decodedData.engineDescription || decodedData.engineModel || '', setValueOptions);
       fieldsToMark.push("engineDescription");
     }
     if (decodedData.transmission) {
-      form.setValue("transmission", decodedData.transmission);
+      form.setValue("transmission", decodedData.transmission, setValueOptions);
       fieldsToMark.push("transmission");
     }
     if (decodedData.driveType) {
-      form.setValue("driveType", decodedData.driveType as any);
-      fieldsToMark.push("driveType");
+      // Normalize drive type to match schema enum values
+      const driveTypeMap: Record<string, "RWD" | "AWD" | "4WD" | "FWD"> = {
+        'RWD': 'RWD',
+        'AWD': 'AWD',
+        '4WD': '4WD',
+        'FWD': 'FWD',
+        'Rear Wheel Drive': 'RWD',
+        'Front Wheel Drive': 'FWD',
+        'All Wheel Drive': 'AWD',
+        'Four Wheel Drive': '4WD',
+        '4-Wheel Drive': '4WD',
+        'Rear-Wheel Drive': 'RWD',
+        'Front-Wheel Drive': 'FWD',
+        'All-Wheel Drive': 'AWD',
+        'Four-Wheel Drive': '4WD',
+        '4-Wheel or All-Wheel Drive': 'AWD',
+        'Part-time 4-Wheel Drive': '4WD',
+      };
+      
+      const driveTypeStr = String(decodedData.driveType).trim();
+      let normalizedDriveType: "RWD" | "AWD" | "4WD" | "FWD" | null = null;
+      
+      // Check map first
+      if (driveTypeMap[driveTypeStr]) {
+        normalizedDriveType = driveTypeMap[driveTypeStr];
+      } else {
+        // Try uppercase match
+        const upper = driveTypeStr.toUpperCase();
+        if (['RWD', 'AWD', '4WD', 'FWD'].includes(upper)) {
+          normalizedDriveType = upper as "RWD" | "AWD" | "4WD" | "FWD";
+        }
+      }
+      
+      // Only set if it's a valid enum value
+      if (normalizedDriveType && ['RWD', 'AWD', '4WD', 'FWD'].includes(normalizedDriveType)) {
+        form.setValue("driveType", normalizedDriveType, setValueOptions);
+        fieldsToMark.push("driveType");
+      }
     }
     
     // Set additional enriched fields if available
     if (decodedData.overallHeight) {
       const heightType = decodedData.overallHeight < 80 ? 'Low Roof' : 
                         decodedData.overallHeight < 90 ? 'Medium Roof' : 'High Roof';
-      form.setValue("heightType" as any, heightType);
+      form.setValue("heightType" as any, heightType, setValueOptions);
       fieldsToMark.push("heightType");
     }
     if (decodedData.axleDescription) {
-      form.setValue("axleDescription" as any, decodedData.axleDescription);
+      form.setValue("axleDescription" as any, decodedData.axleDescription, setValueOptions);
       fieldsToMark.push("axleDescription");
     }
     if (decodedData.rearWheels) {
-      form.setValue("rearWheels" as any, decodedData.rearWheels);
+      form.setValue("rearWheels" as any, decodedData.rearWheels, setValueOptions);
       fieldsToMark.push("rearWheels");
     }
     if (decodedData.batteryVoltage !== undefined && decodedData.batteryVoltage !== null) {
-      form.setValue("batteryVoltage" as any, decodedData.batteryVoltage);
+      form.setValue("batteryVoltage" as any, decodedData.batteryVoltage, setValueOptions);
       fieldsToMark.push("batteryVoltage");
     }
     if (decodedData.horsepower !== undefined && decodedData.horsepower !== null) {
-      form.setValue("horsepower" as any, decodedData.horsepower);
+      form.setValue("horsepower" as any, decodedData.horsepower, setValueOptions);
       fieldsToMark.push("horsepower");
     }
     if (decodedData.mpgCity !== undefined && decodedData.mpgCity !== null) {
-      form.setValue("mpgCity" as any, decodedData.mpgCity);
+      form.setValue("mpgCity" as any, decodedData.mpgCity, setValueOptions);
       fieldsToMark.push("mpgCity");
     }
     if (decodedData.mpgHighway !== undefined && decodedData.mpgHighway !== null) {
-      form.setValue("mpgHighway" as any, decodedData.mpgHighway);
+      form.setValue("mpgHighway" as any, decodedData.mpgHighway, setValueOptions);
       fieldsToMark.push("mpgHighway");
     }
     if (decodedData.mpge !== undefined && decodedData.mpge !== null) {
-      form.setValue("mpge" as any, decodedData.mpge);
+      form.setValue("mpge" as any, decodedData.mpge, setValueOptions);
       fieldsToMark.push("mpge");
     }
     if (decodedData.overallLength !== undefined && decodedData.overallLength !== null) {
-      form.setValue("lengthInches" as any, decodedData.overallLength);
+      form.setValue("lengthInches" as any, decodedData.overallLength, setValueOptions);
       fieldsToMark.push("lengthInches");
     }
     if (decodedData.overallWidth !== undefined && decodedData.overallWidth !== null) {
-      form.setValue("widthInches" as any, decodedData.overallWidth);
+      form.setValue("widthInches" as any, decodedData.overallWidth, setValueOptions);
       fieldsToMark.push("widthInches");
     }
     if (decodedData.overallHeight !== undefined && decodedData.overallHeight !== null) {
-      form.setValue("heightInches" as any, decodedData.overallHeight);
+      form.setValue("heightInches" as any, decodedData.overallHeight, setValueOptions);
       fieldsToMark.push("heightInches");
     }
     if (decodedData.curbWeight !== undefined && decodedData.curbWeight !== null) {
-      form.setValue("baseCurbWeightLbs" as any, decodedData.curbWeight);
+      form.setValue("baseCurbWeightLbs" as any, decodedData.curbWeight, setValueOptions);
       fieldsToMark.push("baseCurbWeightLbs");
     }
     if (decodedData.seatingCapacity !== undefined && decodedData.seatingCapacity !== null) {
-      form.setValue("seatingCapacity" as any, decodedData.seatingCapacity);
+      form.setValue("seatingCapacity" as any, decodedData.seatingCapacity, setValueOptions);
       fieldsToMark.push("seatingCapacity");
     }
     
     // GAWR fields (CRITICAL for commercial vehicles)
     if (decodedData.gawrFront !== undefined && decodedData.gawrFront !== null) {
-      form.setValue("gawrFront" as any, decodedData.gawrFront);
+      form.setValue("gawrFront" as any, decodedData.gawrFront, setValueOptions);
       fieldsToMark.push("gawrFront");
     }
     if (decodedData.gawrRear !== undefined && decodedData.gawrRear !== null) {
-      form.setValue("gawrRear" as any, decodedData.gawrRear);
+      form.setValue("gawrRear" as any, decodedData.gawrRear, setValueOptions);
       fieldsToMark.push("gawrRear");
     }
     
     // Towing capacity
     if (decodedData.towingCapacity !== undefined && decodedData.towingCapacity !== null) {
-      form.setValue("towingCapacity" as any, decodedData.towingCapacity);
+      form.setValue("towingCapacity" as any, decodedData.towingCapacity, setValueOptions);
       fieldsToMark.push("towingCapacity");
     }
     
     // Fuel tank capacity
     if (decodedData.fuelTankCapacity !== undefined && decodedData.fuelTankCapacity !== null) {
-      form.setValue("fuelTankCapacity" as any, decodedData.fuelTankCapacity);
+      form.setValue("fuelTankCapacity" as any, decodedData.fuelTankCapacity, setValueOptions);
       fieldsToMark.push("fuelTankCapacity");
     }
     
     // Technology & Safety features
     if (decodedData.backupCamera !== undefined) {
-      form.setValue("backupCamera" as any, decodedData.backupCamera);
+      form.setValue("backupCamera" as any, decodedData.backupCamera, setValueOptions);
       fieldsToMark.push("backupCamera");
     }
     if (decodedData.bluetoothCapable !== undefined) {
-      form.setValue("bluetoothCapable" as any, decodedData.bluetoothCapable);
+      form.setValue("bluetoothCapable" as any, decodedData.bluetoothCapable, setValueOptions);
       fieldsToMark.push("bluetoothCapable");
     }
     if (decodedData.tpms !== undefined) {
-      form.setValue("tpms" as any, decodedData.tpms);
+      form.setValue("tpms" as any, decodedData.tpms, setValueOptions);
       fieldsToMark.push("tpms");
     }
     
     // Mark all populated fields as decoded
     setDecodedFields(new Set(fieldsToMark));
     
-    const sourceCount = decodedData.dataSources?.length || 1;
-    const sourceNames = decodedData.dataSources?.join(' + ') || 'NHTSA';
-    toast.success(`VIN decoded successfully! ${sourceCount} data source(s): ${sourceNames}`);
+    // Ensure step is preserved (restore after any potential async state updates)
+    // Use setTimeout to ensure this runs after any state updates from setValue calls
+    setTimeout(() => {
+      if (currentStepRef.current !== preservedStep) {
+        setCurrentStep(preservedStep);
+        currentStepRef.current = preservedStep;
+      }
+    }, 0);
   };
 
   const onSubmit = (data: ListingFormData) => {
-    createListing.mutate(data);
+    // Prevent submission if we're not on the final step
+    // This prevents accidental form submission when Enter is pressed in input fields
+    if (currentStep < STEPS.length - 1) {
+      return;
+    }
+    
+    // Clean up NaN values and validate driveType before submission
+    const validDriveTypes = ['RWD', 'AWD', '4WD', 'FWD'] as const;
+    const cleanedData = {
+      ...data,
+      wheelbase: data.wheelbase && !isNaN(data.wheelbase) ? data.wheelbase : undefined,
+      gvwr: data.gvwr && !isNaN(data.gvwr) ? data.gvwr : undefined,
+      payload: data.payload && !isNaN(data.payload) ? data.payload : undefined,
+      // Ensure driveType is valid or undefined
+      driveType: data.driveType && validDriveTypes.includes(data.driveType as any) 
+        ? data.driveType 
+        : undefined,
+    };
+    
+    console.log('[CreateListingForm] Submitting data:', cleanedData);
+    createListing.mutate(cleanedData);
+  };
+  
+  const onError = (errors: any) => {
+    console.error('[CreateListingForm] Validation errors:', errors);
+    // Show first error to user
+    const firstError = Object.values(errors)[0] as any;
+    if (firstError?.message) {
+      toast.error(`Please fix: ${firstError.message}`);
+    } else {
+      toast.error('Please check the form for errors');
+    }
+    // Scroll to first error field
+    const firstErrorField = Object.keys(errors)[0];
+    if (firstErrorField) {
+      const element = document.querySelector(`[name="${firstErrorField}"]`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
   };
 
   const nextStep = () => {
@@ -343,9 +458,49 @@ export function CreateListingForm() {
   };
 
   const progressPercentage = ((currentStep + 1) / STEPS.length) * 100;
+  
+  // Track loading timeout for non-onboarding flows
+  const [loadingTimeout, setLoadingTimeout] = React.useState(false);
+  
+  React.useEffect(() => {
+    if (!isOnboarding && userLoading) {
+      const timeout = setTimeout(() => {
+        setLoadingTimeout(true);
+      }, 3000); // 3 second timeout
+      return () => clearTimeout(timeout);
+    }
+  }, [isOnboarding, userLoading]);
 
-  // Show loading state
-  if (userLoading) {
+  // Check if user is authenticated - this is the critical check
+  if (!user) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Card className="max-w-2xl mx-auto">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="w-5 h-5" />
+              Authentication Required
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground mb-4">
+              You must be signed in to create vehicle listings. Please sign in to continue.
+            </p>
+            <Button onClick={() => window.location.href = '/login'}>
+              Sign In
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // During onboarding, proceed immediately if we have the authenticated user
+  // Don't wait for profile to load - we know they just created their organization
+  // Only show loading if we don't have the auth user yet
+  // For non-onboarding flows, give profile a reasonable time to load
+  // But don't block forever - if it takes too long, proceed anyway
+  if (!isOnboarding && userLoading && !loadingTimeout) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="flex flex-col items-center gap-2">
@@ -357,7 +512,11 @@ export function CreateListingForm() {
   }
 
   // Check if user can create listings
-  if (!permissions?.canCreateListings) {
+  // During onboarding, skip this check since profile might still be loading
+  // We know they just created their organization, so they should have permissions
+  // For non-onboarding, only check if we have profile data - if profile is still loading, proceed anyway
+  // The backend will verify permissions
+  if (!isOnboarding && profile && !permissions?.canCreateListings) {
     return (
       <Card className="max-w-2xl mx-auto">
         <CardHeader>
@@ -383,7 +542,11 @@ export function CreateListingForm() {
   }
 
   // Check if dealer ID exists
-  if (!dealerId) {
+  // During onboarding, we'll try to get dealerId from the backend when creating the listing
+  // The backend can fetch it if needed
+  // For non-onboarding, only check if we have profile data - if profile is still loading, proceed anyway
+  // The backend will verify dealer association
+  if (!isOnboarding && profile && !dealerId) {
     return (
       <Card className="max-w-2xl mx-auto">
         <CardHeader>
@@ -409,7 +572,18 @@ export function CreateListingForm() {
   }
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+    <form 
+      onSubmit={(e) => {
+        // Prevent form submission if not on final step
+        if (currentStep < STEPS.length - 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+        form.handleSubmit(onSubmit, onError)(e);
+      }} 
+      className="space-y-8"
+    >
       {/* Enhanced Progress Steps */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -590,6 +764,8 @@ export function CreateListingForm() {
                   onDecode={handleVINDecode}
                   label=""
                   error={form.formState.errors.vin?.message}
+                  waitForValidation={userLoading || (!user && !isOnboarding)}
+                  disabled={userLoading}
                 />
                 {form.formState.errors.vin && (
                   <div className="flex items-center gap-2 text-sm text-destructive mt-1">
@@ -918,7 +1094,14 @@ export function CreateListingForm() {
                   <Label htmlFor="driveType">Drive Type</Label>
                   <Select
                     value={form.watch("driveType") || ""}
-                    onValueChange={(value) => form.setValue("driveType", value as any)}
+                    onValueChange={(value) => {
+                      // Only set valid enum values
+                      if (value && ['RWD', 'AWD', '4WD', 'FWD'].includes(value)) {
+                        form.setValue("driveType", value as any);
+                      } else {
+                        form.setValue("driveType", undefined);
+                      }
+                    }}
                     disabled={decodedFields.has("driveType")}
                   >
                     <SelectTrigger className={decodedFields.has("driveType") ? "bg-muted cursor-not-allowed" : ""}>
@@ -931,6 +1114,9 @@ export function CreateListingForm() {
                       <SelectItem value="FWD">FWD</SelectItem>
                     </SelectContent>
                   </Select>
+                  {form.formState.errors.driveType && (
+                    <p className="text-sm text-destructive mt-1">{form.formState.errors.driveType.message}</p>
+                  )}
                 </div>
                   </div>
                 </div>

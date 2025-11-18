@@ -22,6 +22,7 @@ import type {
 } from "../supabase-types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EnrichedVehicleData } from "../services/vehicle-data-enrichment";
+import { calculateCompatibility } from "../compatibility/calculator";
 
 /**
  * Get current authenticated user's dealer ID
@@ -545,67 +546,20 @@ export async function findOrCreateEquipment(
 
 /**
  * Calculate GVWR and GAWR compliance for vehicle + equipment combination
- * Now uses actual GAWR values when available
+ * Uses the comprehensive compatibility calculator
  */
-function calculateCompliance(
+async function calculateCompliance(
   vehicleConfig: VehicleConfig,
   equipmentConfig: EquipmentConfig | null
 ) {
-  const vehicleGVWR = vehicleConfig.gvwr;
-  const vehiclePayload = vehicleConfig.payload_capacity;
-  const vehicleCurbWeight = vehicleConfig.base_curb_weight_lbs;
-  const equipmentWeight = equipmentConfig?.weight_lbs || null;
+  const compatibility = await calculateCompatibility(vehicleConfig, equipmentConfig);
   
-  const gawrFront = vehicleConfig.gawr_front_lbs;
-  const gawrRear = vehicleConfig.gawr_rear_lbs;
-
-  if (!vehicleGVWR || vehicleGVWR <= 0) {
-    return {
-      total_combined_weight_lbs: null,
-      payload_capacity_remaining_lbs: null,
-      gvwr_compliant: false,
-      front_gawr_compliant: true, // Default to true if we can't calculate
-      rear_gawr_compliant: true,
-    };
-  }
-
-  // Calculate vehicle curb weight if not provided
-  const curbWeight = vehicleCurbWeight || 
-    (vehiclePayload && vehicleGVWR ? vehicleGVWR - vehiclePayload : null);
-  
-  const equipmentWeightValue = equipmentWeight || 0;
-  const totalWeight = (curbWeight || 0) + equipmentWeightValue;
-  
-  const payloadRemaining = vehicleGVWR - totalWeight;
-  const isGVWRCompliant = totalWeight <= vehicleGVWR;
-
-  // GAWR Compliance (if we have the data)
-  let frontGawrCompliant = true;
-  let rearGawrCompliant = true;
-  
-  if (gawrFront && gawrRear && equipmentWeightValue > 0) {
-    // Use equipment weight distribution if available
-    // Default distribution: 40% front, 60% rear (typical for commercial vehicles)
-    const frontWeightDistribution = (equipmentConfig as any)?.front_axle_weight_distribution_lbs || 
-      (totalWeight * 0.4);
-    const rearWeightDistribution = (equipmentConfig as any)?.rear_axle_weight_distribution_lbs || 
-      (totalWeight * 0.6);
-    
-    // Calculate actual axle loads (curb weight distribution + equipment distribution)
-    // For simplicity, assume curb weight is evenly distributed, then add equipment distribution
-    const frontAxleLoad = (curbWeight || 0) * 0.4 + frontWeightDistribution;
-    const rearAxleLoad = (curbWeight || 0) * 0.6 + rearWeightDistribution;
-    
-    frontGawrCompliant = frontAxleLoad <= gawrFront;
-    rearGawrCompliant = rearAxleLoad <= gawrRear;
-  }
-
   return {
-    total_combined_weight_lbs: totalWeight,
-    payload_capacity_remaining_lbs: payloadRemaining >= 0 ? payloadRemaining : 0,
-    gvwr_compliant: isGVWRCompliant,
-    front_gawr_compliant: frontGawrCompliant,
-    rear_gawr_compliant: rearGawrCompliant,
+    total_combined_weight_lbs: compatibility.totalCombinedWeight,
+    payload_capacity_remaining_lbs: compatibility.payloadRemaining,
+    gvwr_compliant: compatibility.gvwrCompliant,
+    front_gawr_compliant: compatibility.gawrFrontCompliant,
+    rear_gawr_compliant: compatibility.gawrRearCompliant,
   };
 }
 
@@ -671,38 +625,29 @@ export async function ensureCompatibility(
 
   const equipmentConfig = equipmentConfigs[0];
 
-  // Calculate compliance using new function with GAWR support
-  const compliance = calculateCompliance(vehicleConfig, equipmentConfig);
-  
-  // Check wheelbase compatibility if equipment has requirements
-  const cabToAxleOK = true; // TODO: Check minimum_cab_to_axle_inches when available
+  // Calculate comprehensive compatibility
+  const compatibility = await calculateCompatibility(vehicleConfig, equipmentConfig);
 
-  const compatibilityStatus = compliance.gvwr_compliant && 
-                                compliance.front_gawr_compliant && 
-                                compliance.rear_gawr_compliant && 
-                                cabToAxleOK 
-                                ? 'compatible' 
-                                : 'needs_review';
+  const compatibilityStatus = compatibility.compatibilityStatus === 'compatible'
+    ? 'compatible'
+    : compatibility.compatibilityStatus === 'not_compatible'
+    ? 'incompatible'
+    : 'needs_review';
 
-  // Create compatibility record
+  // Create compatibility record with comprehensive calculation results
   const compat = await insertSchemaTable(
     "05. Completed Unit Configuration",
     "chassis_equipment_compatibility",
     {
       vehicle_config_id: vehicleConfigId,
       equipment_config_id: equipmentConfigId,
-      is_compatible: compliance.gvwr_compliant && 
-                     compliance.front_gawr_compliant && 
-                     compliance.rear_gawr_compliant && 
-                     cabToAxleOK,
+      is_compatible: compatibility.compatibilityStatus === 'compatible',
       compatibility_status: compatibilityStatus,
-      payload_remaining_lbs: compliance.payload_capacity_remaining_lbs,
-      gvwr_compliant: compliance.gvwr_compliant,
-      gawr_compliant: compliance.front_gawr_compliant && compliance.rear_gawr_compliant,
-      compatibility_notes: !compliance.gvwr_compliant 
-        ? 'Exceeds GVWR - weight reduction needed'
-        : !compliance.front_gawr_compliant || !compliance.rear_gawr_compliant
-        ? 'Exceeds GAWR limits - weight distribution adjustment needed'
+      payload_remaining_lbs: compatibility.payloadRemaining,
+      gvwr_compliant: compatibility.gvwrCompliant,
+      gawr_compliant: compatibility.gawrFrontCompliant && compatibility.gawrRearCompliant,
+      compatibility_notes: compatibility.warnings.length > 0 
+        ? compatibility.warnings.join('; ')
         : null,
       is_verified: false, // Dealer input, needs verification
     }
@@ -763,8 +708,8 @@ export async function createCompleteConfiguration(
     equipmentConfig = equipmentConfigs.length > 0 ? equipmentConfigs[0] : null;
   }
 
-  // Calculate GVWR and GAWR compliance (now uses actual GAWR values)
-  const compliance = calculateCompliance(
+  // Calculate GVWR and GAWR compliance using comprehensive calculator
+  const compliance = await calculateCompliance(
     vehicleConfig,
     equipmentConfig
   );

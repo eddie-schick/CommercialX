@@ -195,25 +195,55 @@ export async function decodeVINFromNHTSA(vin: string): Promise<NHTSAVehicleData>
 
   try {
     // Use DecodeVinValues for flattened response (easier to parse)
-    const response = await axios.get(
-      `${NHTSA_BASE_URL}/DecodeVinValues/${vin}?format=json`,
-      { timeout: 10000 }
-    );
+    const url = `${NHTSA_BASE_URL}/DecodeVinValues/${vin}?format=json`;
+    console.log(`[NHTSA] Fetching VIN data from: ${url}`);
+    
+    const response = await axios.get(url, { 
+      timeout: 10000,
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
 
-    const results = response.data.Results?.[0];
+    console.log(`[NHTSA] Response status: ${response.status}`);
+    console.log(`[NHTSA] Response data structure:`, {
+      hasData: !!response.data,
+      hasResults: !!response.data?.Results,
+      resultsLength: response.data?.Results?.length || 0,
+    });
+
+    const results = response.data?.Results?.[0];
     
     if (!results) {
-      throw new Error('No data returned from VIN decoder');
+      console.error('[NHTSA] No results in response:', {
+        data: response.data,
+        results: response.data?.Results,
+      });
+      throw new Error('No data returned from VIN decoder. The VIN may be invalid or not found in the database.');
     }
 
     // Check for errors
-    if (results.ErrorCode !== '0' && results.ErrorCode !== '0 - VIN decoded clean. Check Digit (9th position) is correct') {
-      console.warn('NHTSA decode warning:', results.ErrorText);
+    const errorCode = results.ErrorCode;
+    const errorText = results.ErrorText;
+    
+    if (errorCode && errorCode !== '0' && errorCode !== '0 - VIN decoded clean. Check Digit (9th position) is correct') {
+      console.warn('[NHTSA] Decode warning:', { errorCode, errorText });
+      // Don't throw here - some warnings are non-fatal, but log them
+      if (errorCode.startsWith('1') || errorCode.startsWith('2')) {
+        // Error codes starting with 1 or 2 are usually fatal
+        throw new Error(`NHTSA decode error: ${errorText || 'Invalid VIN or data not available'}`);
+      }
     }
 
     // Debug: Log available keys to help troubleshoot
     if (process.env.NODE_ENV === 'development') {
-      console.log('NHTSA API Response keys:', Object.keys(results).slice(0, 20).join(', '), '...');
+      console.log('[NHTSA] API Response keys:', Object.keys(results).slice(0, 20).join(', '), '...');
+      console.log('[NHTSA] Sample data:', {
+        ModelYear: results.ModelYear,
+        Make: results.Make,
+        Model: results.Model,
+        ErrorCode: results.ErrorCode,
+      });
     }
 
     // Extract all fields - DecodeVinValues returns direct properties
@@ -257,7 +287,30 @@ export async function decodeVINFromNHTSA(vin: string): Promise<NHTSAVehicleData>
     const getInt = (key: string, altKeys?: string[]): number | null => {
       const value = getValue(key, altKeys);
       if (!value) return null;
-      const parsed = parseInt(String(value).replace(/[^\d]/g, ''), 10);
+      
+      // Handle ranges (e.g., "26001 - 7000") - take the first value
+      // Handle comma-separated values (e.g., "26001, 7000, 27223") - take the first value
+      // Handle single values with units (e.g., "26001 lbs") - extract just the number
+      let cleanValue = String(value).trim();
+      
+      // If it contains a range indicator (dash, hyphen, or "to"), take the first part
+      if (cleanValue.includes('-') || cleanValue.includes('–') || cleanValue.toLowerCase().includes('to')) {
+        const parts = cleanValue.split(/[-–]|to/i);
+        cleanValue = parts[0].trim();
+      }
+      
+      // If it contains commas, take the first value
+      if (cleanValue.includes(',')) {
+        const parts = cleanValue.split(',');
+        cleanValue = parts[0].trim();
+      }
+      
+      // Extract just the numeric part (allows for units like "lbs" or "kg")
+      // Match the first sequence of digits
+      const match = cleanValue.match(/^(\d+)/);
+      if (!match) return null;
+      
+      const parsed = parseInt(match[1], 10);
       return isNaN(parsed) ? null : parsed;
     };
 
@@ -400,15 +453,55 @@ export async function decodeVINFromNHTSA(vin: string): Promise<NHTSAVehicleData>
       data.payloadCapacity = data.gvwr - data.curbWeight;
     }
 
+    console.log('[NHTSA] Successfully parsed VIN data:', {
+      year: data.year,
+      make: data.make,
+      model: data.model,
+      hasGVWR: !!data.gvwr,
+      hasEngine: !!data.engineModel,
+    });
+
     return data;
   } catch (error: any) {
-    console.error('NHTSA VIN decode error:', error);
+    console.error('[NHTSA] VIN decode error:', error);
+    console.error('[NHTSA] Error details:', {
+      message: error.message,
+      code: error.code,
+      response: error.response ? {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data,
+      } : null,
+    });
+    
     if (error.response) {
-      throw new Error(`NHTSA API error: ${error.response.status} ${error.response.statusText}`);
+      const status = error.response.status;
+      const statusText = error.response.statusText;
+      const errorData = error.response.data;
+      
+      if (status === 404) {
+        throw new Error('VIN not found in NHTSA database. Please verify the VIN is correct.');
+      } else if (status === 429) {
+        throw new Error('Too many requests to NHTSA API. Please try again in a moment.');
+      } else if (status >= 500) {
+        throw new Error(`NHTSA service error (${status}). Please try again later.`);
+      } else {
+        throw new Error(`NHTSA API error: ${status} ${statusText}`);
+      }
     }
+    
+    if (error.code === 'ECONNREFUSED') {
+      throw new Error('Unable to connect to NHTSA service. Please check your internet connection.');
+    }
+    
+    if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+      throw new Error('Request to NHTSA service timed out. Please try again.');
+    }
+    
     if (error instanceof Error) {
       throw new Error(`Failed to decode VIN from NHTSA: ${error.message}`);
     }
+    
     throw new Error('Failed to decode VIN. Please try again or enter manually.');
   }
 }

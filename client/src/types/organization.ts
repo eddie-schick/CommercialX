@@ -21,6 +21,9 @@ export interface Organization {
   country: string;
   website_url?: string;
   logo_url?: string;
+  tax_id?: string;
+  business_hours?: Record<string, any>;
+  sales_territory_states?: string[];
   is_verified: boolean;
   status: 'active' | 'suspended' | 'inactive' | 'pending_verification' | 'rejected';
   subscription_tier: 'free' | 'basic' | 'premium' | 'enterprise';
