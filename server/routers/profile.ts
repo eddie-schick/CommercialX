@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { router, publicProcedure } from '../_core/trpc';
 import { TRPCError } from '@trpc/server';
 import { querySchemaTable, updateSchemaTable, insertSchemaTable } from '../lib/supabase-db';
+import { ENV } from '../_core/env';
 
 /**
  * Profile Router
@@ -210,7 +211,6 @@ export const profileRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -447,7 +447,6 @@ export const profileRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -551,7 +550,6 @@ export const profileRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -677,7 +675,6 @@ export const profileRouter = router({
         });
 
         // Check if DATABASE_URL is available
-        const { ENV } = await import('../_core/env');
         const hasDatabaseUrl = !!ENV.databaseUrl;
         
         let result: any;
@@ -786,7 +783,6 @@ Please check:
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -824,7 +820,6 @@ Please check:
         }
 
         // Check if DATABASE_URL is available
-        const { ENV } = await import('../_core/env');
         const hasDatabaseUrl = !!ENV.databaseUrl;
         
         // Check if dealer record exists
@@ -874,7 +869,7 @@ Please check:
           }
         });
 
-        let dealerId: number;
+        let dealerId: number | undefined;
 
         if (existingDealer) {
           // Update existing dealer
@@ -896,7 +891,7 @@ Please check:
           }
           
           // Use RPC if postgres failed or not available
-          if (!hasDatabaseUrl || !dealerId) {
+          if (!hasDatabaseUrl || dealerId === undefined) {
             try {
               const { data: rpcResult, error: rpcError } = await userSupabase.rpc('update_dealer', {
                 p_dealer_id: existingDealer.id,
@@ -942,7 +937,7 @@ Please check:
           }
           
           // Use RPC if postgres failed or not available
-          if (!hasDatabaseUrl || !dealerId) {
+          if (!hasDatabaseUrl || dealerId === undefined) {
             try {
               const { data: rpcResult, error: rpcError } = await userSupabase.rpc('insert_dealer', {
                 p_dealer_data: dealerData,
@@ -969,6 +964,13 @@ Please check:
           }
         }
 
+        if (dealerId === undefined) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Failed to create or update dealer record',
+          });
+        }
+
         return { success: true, dealerId };
       } catch (error) {
         if (error instanceof TRPCError) {
@@ -987,7 +989,6 @@ Please check:
         const { getSupabaseClient } = await import('../_core/supabase');
         const supabase = getSupabaseClient();
         const { querySchemaTable } = await import('../lib/supabase-db');
-        const { ENV } = await import('../_core/env');
         
         let types: any[] = [];
         
@@ -1085,7 +1086,6 @@ Please check:
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -1203,7 +1203,6 @@ Please check:
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
