@@ -133,6 +133,10 @@ const updatePersonalSchema = z.object({
   bio: z.string().max(1000).optional(),
   emailNotifications: z.boolean().optional(),
   marketingEmails: z.boolean().optional(),
+  avatar: z.union([
+    z.string().url().max(500),
+    z.literal(''),
+  ]).optional(),
 });
 
 const updateOrganizationSchema = z.object({
@@ -192,6 +196,69 @@ const updateDealerSchema = z.object({
   inquiry_email_notification: z.boolean().optional(),
   weekly_performance_report: z.boolean().optional(),
   allow_price_negotiations: z.boolean().optional(),
+  dealer_code: z.string().max(50).optional(),
+  ford_dealer_code: z.string().max(50).optional(),
+  default_price_level: z.string().max(20).optional(),
+  can_order_fleet: z.boolean().optional(),
+  can_order_government: z.boolean().optional(),
+  uses_b4a: z.boolean().optional(),
+  floor_plan_company: z.string().max(100).optional(),
+  floor_plan_account: z.string().max(100).optional(),
+  floor_plan_limit: z.number().nonnegative().nullish(),
+  typical_days_to_floor: z.number().int().positive().nullish(),
+  average_turn_days: z.number().int().positive().nullish(),
+  b4a_account_number: z.string().max(50).optional(),
+  b4a_enrollment_date: z.string().optional(),
+  fein_number: z.string().max(20).optional(),
+  sam_registration: z.boolean().optional(),
+  sam_expiration_date: z.string().optional(),
+  cage_code: z.string().max(10).optional(),
+  ford_pro_elite: z.boolean().optional(),
+  gm_fleet_certified: z.boolean().optional(),
+  ram_commercial_certified: z.boolean().optional(),
+  preferred_upfitter_ids: z.array(z.number().int().positive()).optional(),
+  upfit_delivery_coordination: z.boolean().optional(),
+  primary_contact_name: z.string().max(100).optional(),
+  primary_contact_title: z.string().max(100).optional(),
+  primary_contact_phone: z.string().max(50).optional(),
+  primary_contact_email: z.string().email().max(255).optional(),
+  cdk_dealer_id: z.string().max(50).optional(),
+  reynolds_dealer_id: z.string().max(50).optional(),
+  dms_provider: z.string().max(50).optional(),
+  dms_sync_enabled: z.boolean().optional(),
+  business_hours: z.record(z.string(), z.object({
+    open: z.string(),
+    close: z.string(),
+    closed: z.boolean(),
+  })).optional(),
+});
+
+const dealerCodeSchema = z.object({
+  id: z.union([z.number(), z.string()]).optional().transform((val) => {
+    if (val === undefined || val === null) return undefined;
+    return typeof val === 'string' ? parseInt(val, 10) : val;
+  }),
+  dealer_id: z.number(),
+  organization_id: z.number(),
+  make: z.string(),
+  dealer_code: z.string(),
+  is_primary: z.boolean().default(false),
+  is_active: z.boolean().default(true),
+  certified_date: z.string().nullish().transform((val) => val === null || val === '' ? undefined : val),
+  certification_expires_at: z.string().nullish().transform((val) => val === null || val === '' ? undefined : val),
+  default_price_level: z.string().max(20).nullish().transform((val) => val === null || val === '' ? undefined : val),
+  can_order_fleet: z.boolean().default(false),
+  can_order_government: z.boolean().default(false),
+  uses_b4a: z.boolean().default(true),
+  make_id: z.number(),
+  certification_level: z.string().max(50).nullish().transform((val) => val === null || val === '' ? undefined : val),
+  annual_volume_commitment: z.number().int().positive().nullish(),
+  volume_tier: z.string().max(50).nullish().transform((val) => val === null || val === '' ? undefined : val),
+  region_code: z.string().max(20).nullish().transform((val) => val === null || val === '' ? undefined : val),
+  district_code: z.string().max(20).nullish().transform((val) => val === null || val === '' ? undefined : val),
+  zone_manager_name: z.string().max(100).nullish().transform((val) => val === null || val === '' ? undefined : val),
+  zone_manager_email: z.union([z.string().email().max(255), z.literal(''), z.null()]).nullish().transform((val) => val === null || val === '' ? undefined : val),
+  programs_enrolled: z.any().optional(), // JSONB
 });
 
 /**
@@ -269,6 +336,7 @@ export const profileRouter = router({
               name: authUser.user_metadata?.name || authUser.email?.split('@')[0] || '',
               phone: authUser.user_metadata?.phone || '',
               bio: authUser.user_metadata?.bio || '',
+              avatar: authUser.user_metadata?.avatar || '',
               emailNotifications: authUser.user_metadata?.emailNotifications !== false,
               marketingEmails: authUser.user_metadata?.marketingEmails || false,
               createdAt: authUser.created_at,
@@ -296,6 +364,7 @@ export const profileRouter = router({
               name: authUser.user_metadata?.name || authUser.email?.split('@')[0] || '',
               phone: authUser.user_metadata?.phone || '',
               bio: authUser.user_metadata?.bio || '',
+              avatar: authUser.user_metadata?.avatar || '',
               emailNotifications: authUser.user_metadata?.emailNotifications !== false,
               marketingEmails: authUser.user_metadata?.marketingEmails || false,
               createdAt: authUser.created_at,
@@ -398,6 +467,42 @@ export const profileRouter = router({
           }
         }
 
+        // Fetch dealer codes if dealer exists
+        let dealerCodes: any[] = [];
+        if (dealer?.id) {
+          try {
+            const { querySchemaTable } = await import('../lib/supabase-db');
+            dealerCodes = await querySchemaTable<any>(
+              '02a. Dealership',
+              'dealer_codes',
+              {
+                where: { dealer_id: dealer.id },
+                orderBy: { column: 'is_primary', ascending: false },
+              }
+            );
+          } catch (error) {
+            console.error('[Profile.get] Failed to fetch dealer codes:', error);
+          }
+        }
+
+        // Fetch dealer locations if dealer exists
+        let dealerLocations: any[] = [];
+        if (dealer?.id) {
+          try {
+            const { querySchemaTable } = await import('../lib/supabase-db');
+            dealerLocations = await querySchemaTable<any>(
+              '02a. Dealership',
+              'dealer_locations',
+              {
+                where: { dealer_id: dealer.id },
+                orderBy: { column: 'is_primary', ascending: false },
+              }
+            );
+          } catch (error) {
+            console.error('[Profile.get] Failed to fetch dealer locations:', error);
+          }
+        }
+
         return {
           personal: {
             id: authUser.id,
@@ -417,6 +522,8 @@ export const profileRouter = router({
           } : null,
           // Dealer data comes directly from dealership schema via RPC
           dealer,
+          dealerCodes: dealerCodes.length > 0 ? dealerCodes : undefined,
+          dealerLocations: dealerLocations.length > 0 ? dealerLocations : undefined,
           account: {
             role: profile.role,
             memberSince: profile.joined_at || profile.created_at,
@@ -465,20 +572,38 @@ export const profileRouter = router({
           });
         }
 
-        // Build update data
-        const updateData: Record<string, any> = {};
+        // Build update data - merge with existing user_metadata to preserve other fields
+        const existingMetadata = user.user_metadata || {};
+        const updateData: Record<string, any> = { ...existingMetadata };
+        
         if (input.name !== undefined) updateData.name = input.name;
         if (input.phone !== undefined) updateData.phone = input.phone;
         if (input.bio !== undefined) updateData.bio = input.bio;
         if (input.emailNotifications !== undefined) updateData.emailNotifications = input.emailNotifications;
         if (input.marketingEmails !== undefined) updateData.marketingEmails = input.marketingEmails;
+        if (input.avatar !== undefined) {
+          // Allow empty string to clear avatar
+          updateData.avatar = input.avatar === '' ? null : input.avatar;
+        }
+
+        console.log('[updatePersonal] Updating user metadata:', {
+          userId: user.id,
+          hasServiceRoleKey: !!ENV.supabaseServiceRoleKey,
+          serviceRoleKeyLength: ENV.supabaseServiceRoleKey?.length || 0,
+          updateFields: Object.keys(updateData),
+          avatarValue: input.avatar,
+          avatarLength: input.avatar?.length || 0,
+          fullUpdateData: JSON.stringify(updateData, null, 2),
+        });
 
         // Use Admin API if service role key is available (doesn't require session)
-        // Otherwise, use REST API directly with the access token
+        // Otherwise, try using the user's own update method
         let updateError: any = null;
         
         if (ENV.supabaseServiceRoleKey) {
           // Use Admin API - doesn't require a session
+          console.log('[updatePersonal] Using Admin API with service role key');
+          
           const adminSupabase = createClient(ENV.supabaseUrl, ENV.supabaseServiceRoleKey, {
             auth: {
               autoRefreshToken: false,
@@ -486,41 +611,73 @@ export const profileRouter = router({
             },
           });
           
-          const { error: adminUpdateError } = await adminSupabase.auth.admin.updateUserById(
+          console.log('[updatePersonal] Calling admin.updateUserById with:', {
+            userId: user.id,
+            updateDataKeys: Object.keys(updateData),
+            avatarInUpdate: 'avatar' in updateData,
+            avatarValue: updateData.avatar,
+          });
+          
+          const { data: updatedUser, error: adminUpdateError } = await adminSupabase.auth.admin.updateUserById(
             user.id,
             { user_metadata: updateData }
           );
           
-          updateError = adminUpdateError;
+          if (adminUpdateError) {
+            console.error('[updatePersonal] Admin API update error:', {
+              message: adminUpdateError.message,
+              status: adminUpdateError.status,
+              name: adminUpdateError.name,
+              fullError: JSON.stringify(adminUpdateError, null, 2),
+            });
+            updateError = adminUpdateError;
+          } else {
+            console.log('[updatePersonal] Successfully updated via Admin API:', {
+              userId: updatedUser.user?.id,
+              avatar: updatedUser.user?.user_metadata?.avatar,
+              allMetadata: updatedUser.user?.user_metadata,
+            });
+            
+            // Verify the update actually worked
+            if (input.avatar !== undefined && updatedUser.user?.user_metadata?.avatar !== input.avatar && input.avatar !== '') {
+              console.warn('[updatePersonal] WARNING: Avatar value mismatch!', {
+                expected: input.avatar,
+                actual: updatedUser.user?.user_metadata?.avatar,
+              });
+            }
+          }
         } else {
-          // Fallback: Use REST API directly with the access token
-          // This works without requiring a stored session
+          // Fallback: Try using the user's own update method with their access token
+          // This requires the user to have a valid session
           try {
-            const response = await fetch(`${ENV.supabaseUrl}/auth/v1/user`, {
-              method: 'PUT',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json',
-                'apikey': ENV.supabaseAnonKey,
-              },
-              body: JSON.stringify({
-                user_metadata: updateData,
-              }),
+            const { data: updatedUser, error: userUpdateError } = await userSupabase.auth.updateUser({
+              data: updateData,
             });
 
-            if (!response.ok) {
-              const errorData = await response.json().catch(() => ({}));
-              throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+            if (userUpdateError) {
+              console.error('[updatePersonal] User update error:', userUpdateError);
+              updateError = userUpdateError;
+            } else {
+              console.log('[updatePersonal] Successfully updated via user update:', {
+                userId: updatedUser.user?.id,
+                avatar: updatedUser.user?.user_metadata?.avatar,
+              });
             }
-          } catch (restError: any) {
-            updateError = restError;
+          } catch (userUpdateErr: any) {
+            console.error('[updatePersonal] User update exception:', userUpdateErr);
+            updateError = userUpdateErr;
           }
         }
 
         if (updateError) {
+          console.error('[updatePersonal] Final update error:', {
+            message: updateError.message,
+            code: updateError.code,
+            status: updateError.status,
+          });
           throw new TRPCError({
             code: 'INTERNAL_SERVER_ERROR',
-            message: `Failed to update profile: ${updateError.message}`,
+            message: `Failed to update profile: ${updateError.message || 'Unknown error'}. ${!ENV.supabaseServiceRoleKey ? 'Please ensure SUPABASE_SERVICE_ROLE_KEY is set in your environment variables.' : ''}`,
           });
         }
 
@@ -861,11 +1018,35 @@ Please check:
           updated_at: new Date().toISOString(),
         };
 
+        // PostgreSQL text[] array fields in dealers table
+        const postgresArrayFields = ['specializations', 'makes_carried', 'sales_territory_states', 'certifications', 'awards'];
+        
+        // Helper to convert JSONB arrays to text[] arrays for RPC
+        const convertArrayForRPC = (value: any): any => {
+          if (Array.isArray(value)) {
+            return value; // Already an array
+          }
+          if (typeof value === 'string') {
+            try {
+              const parsed = JSON.parse(value);
+              return Array.isArray(parsed) ? parsed : [];
+            } catch {
+              return [];
+            }
+          }
+          return value;
+        };
+
         // Add all optional fields - handle null values properly
         Object.entries(input).forEach(([key, value]) => {
           if (key !== 'organizationId' && value !== undefined) {
-            // For nullish number fields, explicitly set null if value is null
-            dealerData[key] = value;
+            // For PostgreSQL text[] arrays, ensure they're arrays (not JSON strings)
+            // The postgres client will handle conversion, but RPC needs arrays too
+            if (postgresArrayFields.includes(key) && Array.isArray(value)) {
+              dealerData[key] = value; // Pass as array - both postgres and RPC can handle this
+            } else {
+              dealerData[key] = value;
+            }
           }
         });
 
@@ -893,15 +1074,35 @@ Please check:
           // Use RPC if postgres failed or not available
           if (!hasDatabaseUrl || dealerId === undefined) {
             try {
+              // Convert PostgreSQL text[] arrays from JSONB format to proper array format for RPC
+              // The RPC function receives JSONB, but we need to ensure arrays are properly formatted
+              const rpcData: Record<string, any> = { ...dealerData };
+              
+              // For PostgreSQL text[] arrays, ensure they're passed as arrays (not JSONB)
+              // If they come in as JSONB strings, parse them back to arrays
+              postgresArrayFields.forEach((field) => {
+                if (rpcData[field] !== undefined && rpcData[field] !== null) {
+                  rpcData[field] = convertArrayForRPC(rpcData[field]);
+                }
+              });
+
               const { data: rpcResult, error: rpcError } = await userSupabase.rpc('update_dealer', {
                 p_dealer_id: existingDealer.id,
-                p_update_data: dealerData,
+                p_update_data: rpcData,
               });
               
               if (rpcError || (rpcResult && rpcResult.error)) {
+                const errorMsg = rpcError?.message || rpcResult?.error || 'Unknown error';
+                // Check if it's the array type mismatch error
+                if (errorMsg.includes('text[]') && errorMsg.includes('jsonb')) {
+                  throw new TRPCError({
+                    code: 'INTERNAL_SERVER_ERROR',
+                    message: `Failed to update dealer: The update_dealer RPC function needs to convert JSONB arrays to text[] arrays. Please ensure DATABASE_URL is configured to use the postgres client, or update the RPC function to handle array conversion. Error: ${errorMsg}`,
+                  });
+                }
                 throw new TRPCError({
                   code: 'INTERNAL_SERVER_ERROR',
-                  message: `Failed to update dealer via RPC: ${rpcError?.message || rpcResult?.error || 'Unknown error'}. Please check that the update_dealer RPC function exists.`,
+                  message: `Failed to update dealer via RPC: ${errorMsg}. Please check that the update_dealer RPC function exists and is properly configured.`,
                 });
               }
               
@@ -939,14 +1140,30 @@ Please check:
           // Use RPC if postgres failed or not available
           if (!hasDatabaseUrl || dealerId === undefined) {
             try {
+              // Convert arrays for RPC (same as update)
+              const rpcData: Record<string, any> = { ...dealerData };
+              postgresArrayFields.forEach((field) => {
+                if (rpcData[field] !== undefined && rpcData[field] !== null) {
+                  rpcData[field] = convertArrayForRPC(rpcData[field]);
+                }
+              });
+
               const { data: rpcResult, error: rpcError } = await userSupabase.rpc('insert_dealer', {
-                p_dealer_data: dealerData,
+                p_dealer_data: rpcData,
               });
               
               if (rpcError || (rpcResult && rpcResult.error)) {
+                const errorMsg = rpcError?.message || rpcResult?.error || 'Unknown error';
+                // Check if it's the array type mismatch error
+                if (errorMsg.includes('text[]') && errorMsg.includes('jsonb')) {
+                  throw new TRPCError({
+                    code: 'INTERNAL_SERVER_ERROR',
+                    message: `Failed to create dealer: The insert_dealer RPC function needs to convert JSONB arrays to text[] arrays. Please ensure DATABASE_URL is configured to use the postgres client, or update the RPC function to handle array conversion. Error: ${errorMsg}`,
+                  });
+                }
                 throw new TRPCError({
                   code: 'INTERNAL_SERVER_ERROR',
-                  message: `Failed to create dealer via RPC: ${rpcError?.message || rpcResult?.error || 'Unknown error'}. Please check that the insert_dealer RPC function exists.`,
+                  message: `Failed to create dealer via RPC: ${errorMsg}. Please check that the insert_dealer RPC function exists and is properly configured.`,
                 });
               }
               
@@ -972,6 +1189,300 @@ Please check:
         }
 
         return { success: true, dealerId };
+      } catch (error) {
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }),
+
+  getMakes: publicProcedure
+    .query(async () => {
+      try {
+        const { querySchemaTable } = await import('../lib/supabase-db');
+        const makes = await querySchemaTable<{
+          id: number;
+          make_name: string;
+          make_code?: string;
+          is_active: boolean;
+          is_commercial_vehicle_manufacturer: boolean;
+        }>(
+          '03. Vehicle Data',
+          'makes',
+          {
+            where: { is_active: true, is_commercial_vehicle_manufacturer: true },
+            orderBy: { column: 'make_name', ascending: true },
+          }
+        );
+        return makes;
+      } catch (error) {
+        console.error('[getMakes] Error fetching makes:', error);
+        // Return fallback makes if database query fails
+        return [
+          { id: 1, make_name: 'Ford', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 2, make_name: 'Freightliner', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 3, make_name: 'Isuzu', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 4, make_name: 'Hino', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 5, make_name: 'Mack', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 6, make_name: 'Peterbilt', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 7, make_name: 'Kenworth', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 8, make_name: 'Volvo', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 9, make_name: 'International', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 10, make_name: 'Mercedes-Benz', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 11, make_name: 'Ram', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 12, make_name: 'Chevrolet', is_active: true, is_commercial_vehicle_manufacturer: true },
+          { id: 13, make_name: 'GMC', is_active: true, is_commercial_vehicle_manufacturer: true },
+        ];
+      }
+    }),
+
+  getDealerCodes: publicProcedure
+    .input(z.object({ dealerId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      try {
+        const authHeader = ctx.req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'No authorization token provided',
+          });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import('@supabase/supabase-js');
+        
+        const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        });
+
+        const { data: { user }, error: authError } = await userSupabase.auth.getUser();
+        
+        if (authError || !user) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          });
+        }
+
+        const { querySchemaTable } = await import('../lib/supabase-db');
+        const dealerCodes = await querySchemaTable<any>(
+          '02a. Dealership',
+          'dealer_codes',
+          {
+            where: { dealer_id: input.dealerId },
+            orderBy: { column: 'is_primary', ascending: false },
+          }
+        );
+
+        return dealerCodes;
+      } catch (error) {
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }),
+
+  upsertDealerCode: publicProcedure
+    .input(dealerCodeSchema)
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const authHeader = ctx.req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'No authorization token provided',
+          });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import('@supabase/supabase-js');
+        
+        const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        });
+
+        const { data: { user }, error: authError } = await userSupabase.auth.getUser();
+        
+        if (authError || !user) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          });
+        }
+
+        // Verify user has permission
+        const { data: profileData } = await userSupabase.rpc('get_current_user_profile');
+        const profile = Array.isArray(profileData) ? profileData[0] : profileData;
+        
+        if (!profile || profile.error || profile.organization_id !== input.organization_id) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You do not have permission to manage this dealer',
+          });
+        }
+
+        if (profile.role !== 'owner' && profile.role !== 'admin') {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Only owners and admins can manage dealer codes',
+          });
+        }
+
+        const hasDatabaseUrl = !!ENV.databaseUrl;
+        const dealerCodeData: Record<string, any> = {
+          dealer_id: input.dealer_id,
+          organization_id: input.organization_id,
+          make: input.make,
+          dealer_code: input.dealer_code,
+          is_primary: input.is_primary,
+          is_active: input.is_active,
+          make_id: input.make_id,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (input.certified_date) dealerCodeData.certified_date = input.certified_date;
+        if (input.certification_expires_at) dealerCodeData.certification_expires_at = input.certification_expires_at;
+        if (input.default_price_level) dealerCodeData.default_price_level = input.default_price_level;
+        dealerCodeData.can_order_fleet = input.can_order_fleet;
+        dealerCodeData.can_order_government = input.can_order_government;
+        dealerCodeData.uses_b4a = input.uses_b4a;
+        if (input.certification_level) dealerCodeData.certification_level = input.certification_level;
+        if (input.annual_volume_commitment !== undefined && input.annual_volume_commitment !== null) dealerCodeData.annual_volume_commitment = input.annual_volume_commitment;
+        if (input.volume_tier) dealerCodeData.volume_tier = input.volume_tier;
+        if (input.region_code) dealerCodeData.region_code = input.region_code;
+        if (input.district_code) dealerCodeData.district_code = input.district_code;
+        if (input.zone_manager_name) dealerCodeData.zone_manager_name = input.zone_manager_name;
+        if (input.zone_manager_email) dealerCodeData.zone_manager_email = input.zone_manager_email;
+        if (input.programs_enrolled) dealerCodeData.programs_enrolled = input.programs_enrolled;
+
+        if (input.id) {
+          // Update existing
+          if (hasDatabaseUrl) {
+            const { updateSchemaTable } = await import('../lib/supabase-db');
+            await updateSchemaTable(
+              '02a. Dealership',
+              'dealer_codes',
+              dealerCodeData,
+              { id: input.id }
+            );
+            return { success: true, id: input.id };
+          } else {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Database connection required for dealer code updates',
+            });
+          }
+        } else {
+          // Insert new
+          dealerCodeData.created_at = new Date().toISOString();
+          if (hasDatabaseUrl) {
+            const { insertSchemaTable } = await import('../lib/supabase-db');
+            const result = await insertSchemaTable<{ id: number }>(
+              '02a. Dealership',
+              'dealer_codes',
+              dealerCodeData
+            );
+            return { success: true, id: result.id };
+          } else {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'Database connection required for dealer code creation',
+            });
+          }
+        }
+      } catch (error) {
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }),
+
+  deleteDealerCode: publicProcedure
+    .input(z.object({ id: z.number(), organizationId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const authHeader = ctx.req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'No authorization token provided',
+          });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import('@supabase/supabase-js');
+        
+        const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        });
+
+        const { data: { user }, error: authError } = await userSupabase.auth.getUser();
+        
+        if (authError || !user) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          });
+        }
+
+        // Verify user has permission
+        const { data: profileData } = await userSupabase.rpc('get_current_user_profile');
+        const profile = Array.isArray(profileData) ? profileData[0] : profileData;
+        
+        if (!profile || profile.error || profile.organization_id !== input.organizationId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You do not have permission to delete this dealer code',
+          });
+        }
+
+        if (profile.role !== 'owner' && profile.role !== 'admin') {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'Only owners and admins can delete dealer codes',
+          });
+        }
+
+        const hasDatabaseUrl = !!ENV.databaseUrl;
+        if (!hasDatabaseUrl) {
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Database connection required for dealer code deletion',
+          });
+        }
+
+        const { deleteSchemaTable } = await import('../lib/supabase-db');
+        await deleteSchemaTable(
+          '02a. Dealership',
+          'dealer_codes',
+          { id: input.id }
+        );
+
+        return { success: true };
       } catch (error) {
         if (error instanceof TRPCError) {
           throw error;
@@ -1325,6 +1836,251 @@ Please check:
             organizationId && !dealerExists && 'Organization exists but no dealer record found (may be normal)',
           ].filter(Boolean) as string[],
         };
+      } catch (error) {
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }),
+
+  // Dealer Locations CRUD operations
+  upsertDealerLocation: publicProcedure
+    .input(z.object({
+      id: z.number().optional(),
+      dealer_id: z.number(),
+      organization_id: z.number(),
+      location_name: z.string().min(1).max(255),
+      location_type: z.enum(['main', 'satellite', 'service_only', 'parts_only']).optional(),
+      address_line1: z.string().max(255).optional(),
+      address_line2: z.string().max(255).optional(),
+      city: z.string().max(100).optional(),
+      state_province: z.string().max(100).optional(),
+      postal_code: z.string().max(20).optional(),
+      country: z.string().max(2).optional().default('US'),
+      latitude: z.number().nullable().optional(),
+      longitude: z.number().nullable().optional(),
+      phone: z.string().max(50).optional(),
+      phone_ext: z.string().max(20).optional(),
+      fax: z.string().max(50).optional(),
+      email: z.string().email().max(255).optional(),
+      business_hours: z.record(z.string(), z.object({
+        open: z.string(),
+        close: z.string(),
+        closed: z.boolean(),
+      })).optional(),
+      is_primary: z.boolean().default(false),
+      is_active: z.boolean().default(true),
+      manager_name: z.string().max(255).optional(),
+      manager_email: z.string().email().max(255).optional(),
+      manager_phone: z.string().max(50).optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const authHeader = ctx.req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'No authorization token provided',
+          });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import('@supabase/supabase-js');
+        
+        const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        });
+
+        const { data: { user }, error: authError } = await userSupabase.auth.getUser();
+        
+        if (authError || !user) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          });
+        }
+
+        // Verify user has access to this organization
+        const { data: profile } = await userSupabase.rpc('get_current_user_profile');
+        if (!profile || profile.organization_id !== input.organization_id) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You do not have access to this organization',
+          });
+        }
+
+        // Prepare location data
+        const locationData: any = {
+          dealer_id: input.dealer_id,
+          organization_id: input.organization_id,
+          location_name: input.location_name,
+          location_type: input.location_type,
+          address_line1: input.address_line1 || null,
+          address_line2: input.address_line2 || null,
+          city: input.city || null,
+          state_province: input.state_province || null,
+          postal_code: input.postal_code || null,
+          country: input.country || 'US',
+          latitude: input.latitude ?? null,
+          longitude: input.longitude ?? null,
+          phone: input.phone || null,
+          phone_ext: input.phone_ext || null,
+          fax: input.fax || null,
+          email: input.email || null,
+          business_hours: input.business_hours ? normalizeBusinessHoursData(input.business_hours) : null,
+          is_primary: input.is_primary,
+          is_active: input.is_active,
+          manager_name: input.manager_name || null,
+          manager_email: input.manager_email || null,
+          manager_phone: input.manager_phone || null,
+          notes: input.notes || null,
+        };
+
+        // Check if DATABASE_URL is available
+        const hasDatabaseUrl = !!ENV.databaseUrl;
+        
+        if (!hasDatabaseUrl) {
+          console.error('[upsertDealerLocation] DATABASE_URL not found. ENV.databaseUrl:', ENV.databaseUrl);
+          console.error('[upsertDealerLocation] process.env.DATABASE_URL:', process.env.DATABASE_URL);
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'DATABASE_URL environment variable is required for dealer location operations. Please configure DATABASE_URL in your environment variables and restart the server.',
+          });
+        }
+
+        let result: any;
+        
+        // Use postgres client for custom schema access
+        try {
+          if (input.id) {
+            // Update existing location
+            result = await updateSchemaTable(
+              '02a. Dealership',
+              'dealer_locations',
+              locationData,
+              { id: input.id }
+            );
+          } else {
+            // Create new location
+            result = await insertSchemaTable(
+              '02a. Dealership',
+              'dealer_locations',
+              locationData
+            );
+          }
+        } catch (error) {
+          console.error('[upsertDealerLocation] Failed to save location:', error);
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to save dealer location',
+          });
+        }
+
+        // If this is set as primary, unset other primary locations
+        if (input.is_primary) {
+          const currentLocationId = input.id || result?.id;
+          
+          try {
+            // Query for all other primary locations for this dealer
+            const { querySchemaTable } = await import('../lib/supabase-db');
+            const otherPrimaryLocations = await querySchemaTable<any>(
+              '02a. Dealership',
+              'dealer_locations',
+              {
+                where: { 
+                  dealer_id: input.dealer_id,
+                  is_primary: true,
+                },
+              }
+            );
+            
+            // Update each location that isn't the current one
+            for (const loc of otherPrimaryLocations) {
+              if (loc.id !== currentLocationId) {
+                await updateSchemaTable(
+                  '02a. Dealership',
+                  'dealer_locations',
+                  { is_primary: false },
+                  { id: loc.id }
+                );
+              }
+            }
+          } catch (error) {
+            console.error('[upsertDealerLocation] Failed to unset other primary locations:', error);
+            // Don't fail the entire operation if this step fails
+          }
+        }
+
+        return { success: true, location: result };
+      } catch (error) {
+        if (error instanceof TRPCError) {
+          throw error;
+        }
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }),
+
+  deleteDealerLocation: publicProcedure
+    .input(z.object({ id: z.number(), organizationId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const authHeader = ctx.req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'No authorization token provided',
+          });
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import('@supabase/supabase-js');
+        
+        const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        });
+
+        const { data: { user }, error: authError } = await userSupabase.auth.getUser();
+        
+        if (authError || !user) {
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'Not authenticated',
+          });
+        }
+
+        // Verify user has access to this organization
+        const { data: profile } = await userSupabase.rpc('get_current_user_profile');
+        if (!profile || profile.organization_id !== input.organizationId) {
+          throw new TRPCError({
+            code: 'FORBIDDEN',
+            message: 'You do not have access to this organization',
+          });
+        }
+
+        const { deleteSchemaTable } = await import('../lib/supabase-db');
+        await deleteSchemaTable(
+          '02a. Dealership',
+          'dealer_locations',
+          { id: input.id }
+        );
+
+        return { success: true };
       } catch (error) {
         if (error instanceof TRPCError) {
           throw error;

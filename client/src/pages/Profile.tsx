@@ -6,15 +6,1032 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useState, useEffect } from "react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import { useState, useEffect, useMemo, useRef, useImperativeHandle, forwardRef } from "react";
 import { toast } from "sonner";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import { useLocation } from "wouter";
-import { User, Mail, Phone, Building, MapPin, Bell, Store, CheckCircle2, Clock, MapPin as MapPinIcon, X } from "lucide-react";
+import { User, Mail, Phone, Building, MapPin, Bell, Store, CheckCircle2, Clock, MapPin as MapPinIcon, X, AlertCircle, PlusCircle, ExternalLink, Settings, Briefcase, Shield, Truck, FileText, Zap, Save, Edit2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
-import type { CompleteProfile, PersonalInfo, OrganizationInfo, DealerInfo, OrganizationType } from "@/types/profile";
+import type { CompleteProfile, PersonalInfo, OrganizationInfo, DealerInfo, OrganizationType, DealerCode, DealerLocation, Make } from "@/types/profile";
+import { ImageUpload } from "@/components/ImageUpload";
+import { US_STATES } from "@/lib/us-states";
+
+// Dealer Codes Manager Component
+function DealerCodesManager({
+  dealerId,
+  organizationId,
+  dealerCodes,
+  makes,
+  makesCarried,
+  onUpdate,
+  upsertMutation,
+  deleteMutation,
+}: {
+  dealerId: number;
+  organizationId: number;
+  dealerCodes: DealerCode[];
+  makes: Make[];
+  makesCarried?: string[];
+  onUpdate: () => void;
+  upsertMutation: any;
+  deleteMutation: any;
+}) {
+  const [editingCode, setEditingCode] = useState<DealerCode | null>(null);
+  const [newCode, setNewCode] = useState<Partial<DealerCode>>({
+    dealer_id: dealerId,
+    organization_id: organizationId,
+    make: "",
+    dealer_code: "",
+    is_primary: false,
+    is_active: true,
+    can_order_fleet: false,
+    can_order_government: false,
+    uses_b4a: true,
+    default_price_level: "0",
+    make_id: 0,
+  });
+
+  const handleSave = async (code: Partial<DealerCode>) => {
+    try {
+      const selectedMake = makes.find(m => m.make_name === code.make || m.id === (typeof code.make_id === 'string' ? parseInt(code.make_id) : code.make_id));
+      if (!selectedMake) {
+        toast.error("Please select a valid make");
+        return;
+      }
+
+      // Ensure make_id is a number
+      const makeId = typeof selectedMake.id === 'number' ? selectedMake.id : parseInt(String(selectedMake.id));
+
+      // Prepare the data, converting empty strings to undefined and ensuring id is a number if present
+      const submitData: any = {
+        ...code,
+        dealer_id: dealerId,
+        organization_id: organizationId,
+        make: selectedMake.make_name,
+        make_id: makeId,
+      };
+
+      // Convert id to number if it exists
+      if (submitData.id !== undefined && submitData.id !== null) {
+        submitData.id = typeof submitData.id === 'string' ? parseInt(submitData.id, 10) : submitData.id;
+      }
+
+      // Convert empty strings to undefined for optional fields
+      const optionalStringFields = [
+        'certified_date',
+        'certification_expires_at',
+        'certification_level',
+        'volume_tier',
+        'region_code',
+        'district_code',
+        'zone_manager_name',
+        'zone_manager_email',
+        'default_price_level',
+      ];
+      
+      optionalStringFields.forEach(field => {
+        if (submitData[field] === '' || submitData[field] === null) {
+          submitData[field] = undefined;
+        }
+      });
+
+      await upsertMutation.mutateAsync(submitData);
+      
+      toast.success("Dealer code saved successfully");
+      setEditingCode(null);
+      setNewCode({
+        dealer_id: dealerId,
+        organization_id: organizationId,
+        make: "",
+        dealer_code: "",
+        is_primary: false,
+        is_active: true,
+        can_order_fleet: false,
+        can_order_government: false,
+        uses_b4a: true,
+        default_price_level: "0",
+        make_id: 0,
+      });
+      onUpdate();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to save dealer code");
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Are you sure you want to delete this dealer code?")) return;
+    
+    try {
+      await deleteMutation.mutateAsync({ id, organizationId });
+      toast.success("Dealer code deleted successfully");
+      onUpdate();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete dealer code");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Existing Dealer Codes */}
+      {dealerCodes.length > 0 && (
+        <div className="space-y-2">
+          {dealerCodes.map((code) => (
+            <div key={code.id} className="border rounded-lg p-4">
+              {editingCode?.id === code.id ? (
+                <DealerCodeForm
+                  code={editingCode}
+                  makes={makes}
+                  makesCarried={makesCarried}
+                  onSave={(updated) => handleSave(updated)}
+                  onCancel={() => setEditingCode(null)}
+                />
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{code.make}</span>
+                      <Badge variant={code.is_primary ? "default" : "secondary"}>
+                        {code.is_primary ? "Primary" : "Secondary"}
+                      </Badge>
+                      {!code.is_active && (
+                        <Badge variant="outline">Inactive</Badge>
+                      )}
+                    </div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      Code: {code.dealer_code}
+                      {code.default_price_level && ` • Price Level: ${code.default_price_level}`}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingCode(code)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => handleDelete(code.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add New Dealer Code */}
+      {!editingCode && (
+        <div className="border rounded-lg p-4">
+          <DealerCodeForm
+            code={newCode}
+            makes={makes}
+            makesCarried={makesCarried}
+            onSave={(code) => handleSave(code)}
+            onCancel={() => setNewCode({
+              dealer_id: dealerId,
+              organization_id: organizationId,
+              make: "",
+              dealer_code: "",
+              is_primary: false,
+              is_active: true,
+              can_order_fleet: false,
+              can_order_government: false,
+              uses_b4a: true,
+              default_price_level: "0",
+              make_id: 0,
+            })}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Dealer Locations Manager Component
+const DealerLocationsManager = forwardRef<
+  { submit: () => Promise<void> },
+  {
+    dealerId: number;
+    organizationId: number;
+    dealerLocations: DealerLocation[];
+    onUpdate: () => void;
+    upsertMutation: any;
+    deleteMutation: any;
+  }
+>(({
+  dealerId,
+  organizationId,
+  dealerLocations,
+  onUpdate,
+  upsertMutation,
+  deleteMutation,
+}, ref) => {
+  const [editingLocation, setEditingLocation] = useState<DealerLocation | null>(null);
+  const [newLocation, setNewLocation] = useState<Partial<DealerLocation>>({
+    dealer_id: dealerId,
+    organization_id: organizationId,
+    location_name: "",
+    location_type: "main",
+    is_primary: false,
+    is_active: true,
+    country: "US",
+  });
+  const newLocationFormRef = useRef<{ submit: () => Promise<void> }>(null);
+  const editingLocationFormRef = useRef<{ submit: () => Promise<void> }>(null);
+
+  const handleSave = async (location: Partial<DealerLocation>) => {
+    try {
+      // Validate required fields before submitting
+      if (!location.location_name || location.location_name.trim() === '') {
+        toast.error("Location name is required");
+        return;
+      }
+      
+      const result = await upsertMutation.mutateAsync({
+        ...location,
+        dealer_id: dealerId,
+        organization_id: organizationId,
+      });
+      
+      if (result) {
+        toast.success("Location saved successfully");
+        setEditingLocation(null);
+        setNewLocation({
+          dealer_id: dealerId,
+          organization_id: organizationId,
+          location_name: "",
+          location_type: "main",
+          is_primary: false,
+          is_active: true,
+          country: "US",
+        });
+        // Only call onUpdate if save was successful
+        try {
+          await onUpdate();
+        } catch (updateError) {
+          console.error('Error refetching profile after save:', updateError);
+          // Don't throw - the save was successful, just the refetch failed
+        }
+      }
+    } catch (error: any) {
+      console.error('Error in handleSave:', error);
+      const errorMessage = error?.message || error?.data?.message || error?.data?.zodError?.message || "Failed to save location";
+      toast.error(errorMessage);
+      // Re-throw to prevent form from thinking it succeeded
+      throw error;
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("Are you sure you want to delete this location?")) return;
+    
+    try {
+      await deleteMutation.mutateAsync({ id, organizationId });
+      toast.success("Location deleted successfully");
+      onUpdate();
+    } catch (error: any) {
+      toast.error(error.message || "Failed to delete location");
+    }
+  };
+
+  const submitLocationForm = async () => {
+    // Try to submit the editing form first, then the new location form
+    if (editingLocationFormRef.current) {
+      await editingLocationFormRef.current.submit();
+    } else if (newLocationFormRef.current) {
+      await newLocationFormRef.current.submit();
+    }
+  };
+
+  useImperativeHandle(ref, () => ({
+    submit: submitLocationForm,
+  }));
+
+  return (
+    <div className="space-y-4">
+      {/* Existing Locations */}
+      {dealerLocations.length > 0 && (
+        <div className="space-y-2">
+          {dealerLocations.map((location) => (
+            <div key={location.id} className="border rounded-lg p-4">
+              {editingLocation?.id === location.id ? (
+                <DealerLocationForm
+                  ref={editingLocationFormRef}
+                  location={editingLocation}
+                  onSave={(updated) => handleSave(updated)}
+                  onCancel={() => setEditingLocation(null)}
+                />
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{location.location_name}</span>
+                      <Badge variant={location.is_primary ? "default" : "secondary"}>
+                        {location.is_primary ? "Primary" : location.location_type || "Main"}
+                      </Badge>
+                      {!location.is_active && (
+                        <Badge variant="outline">Inactive</Badge>
+                      )}
+                    </div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      {location.address_line1 && `${location.address_line1}, `}
+                      {location.city && `${location.city}, `}
+                      {location.state_province && `${location.state_province} `}
+                      {location.postal_code}
+                      {location.phone && ` • ${location.phone}`}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingLocation(location)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => handleDelete(location.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add New Location */}
+      {!editingLocation && (
+        <div className="border rounded-lg p-4">
+          <DealerLocationForm
+            ref={newLocationFormRef}
+            location={newLocation}
+            onSave={(location) => handleSave(location)}
+            onCancel={() => setNewLocation({
+              dealer_id: dealerId,
+              organization_id: organizationId,
+              location_name: "",
+              location_type: "main",
+              is_primary: false,
+              is_active: true,
+              country: "US",
+            })}
+          />
+        </div>
+      )}
+    </div>
+  );
+});
+
+DealerLocationsManager.displayName = "DealerLocationsManager";
+
+// Dealer Location Form Component
+const DealerLocationForm = forwardRef<
+  { submit: () => Promise<void> },
+  {
+    location: Partial<DealerLocation>;
+    onSave: (location: Partial<DealerLocation>) => void;
+    onCancel: () => void;
+  }
+>(({ location, onSave, onCancel }, ref) => {
+  const [formData, setFormData] = useState<Partial<DealerLocation>>(location);
+
+  useEffect(() => {
+    setFormData(location);
+  }, [location]);
+
+  // Business hours state (must be before submitForm to be accessible)
+  const [businessHours, setBusinessHours] = useState<Record<string, { open: string; close: string; closed: boolean }>>(
+    formData.business_hours || {
+      monday: { open: "08:00", close: "18:00", closed: false },
+      tuesday: { open: "08:00", close: "18:00", closed: false },
+      wednesday: { open: "08:00", close: "18:00", closed: false },
+      thursday: { open: "08:00", close: "18:00", closed: false },
+      friday: { open: "08:00", close: "18:00", closed: false },
+      saturday: { open: "09:00", close: "17:00", closed: false },
+      sunday: { closed: true, open: "", close: "" },
+    }
+  );
+
+  const submitForm = async () => {
+    // Validate required fields
+    if (!formData.location_name || formData.location_name.trim() === '') {
+      toast.error("Location name is required");
+      return;
+    }
+    
+    try {
+      // Ensure business_hours is included in the submission
+      await onSave({
+        ...formData,
+        business_hours: businessHours,
+      });
+    } catch (error) {
+      // Error is already handled in handleSave, but ensure we don't reload
+      console.error('Error saving location:', error);
+      throw error;
+    }
+  };
+
+  useImperativeHandle(ref, () => ({
+    submit: submitForm,
+  }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await submitForm();
+  };
+
+  useEffect(() => {
+    if (formData.business_hours) {
+      setBusinessHours(formData.business_hours);
+    }
+  }, [formData.business_hours]);
+
+  const updateBusinessHours = (day: string, field: 'open' | 'close' | 'closed', value: string | boolean) => {
+    setBusinessHours(prev => {
+      const updated = {
+        ...prev,
+        [day]: {
+          ...prev[day],
+          [field]: value,
+        },
+      };
+      // Update formData with the new business hours
+      setFormData(prevFormData => ({
+        ...prevFormData,
+        business_hours: updated,
+      }));
+      return updated;
+    });
+  };
+
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="location_name">
+            Location Name <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id="location_name"
+            value={formData.location_name || ""}
+            onChange={(e) => setFormData({ ...formData, location_name: e.target.value })}
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="location_type">Location Type</Label>
+          <Select
+            value={formData.location_type || "main"}
+            onValueChange={(value) => setFormData({ ...formData, location_type: value as any })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="main">Main</SelectItem>
+              <SelectItem value="satellite">Satellite</SelectItem>
+              <SelectItem value="service_only">Service Only</SelectItem>
+              <SelectItem value="parts_only">Parts Only</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Address</Label>
+        <div className="space-y-2">
+          <Input
+            placeholder="Address Line 1"
+            value={formData.address_line1 || ""}
+            onChange={(e) => setFormData({ ...formData, address_line1: e.target.value })}
+          />
+          <Input
+            placeholder="Address Line 2"
+            value={formData.address_line2 || ""}
+            onChange={(e) => setFormData({ ...formData, address_line2: e.target.value })}
+          />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <Input
+              placeholder="City"
+              value={formData.city || ""}
+              onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+            />
+            <Input
+              placeholder="State/Province"
+              value={formData.state_province || ""}
+              onChange={(e) => setFormData({ ...formData, state_province: e.target.value })}
+            />
+            <Input
+              placeholder="Postal Code"
+              value={formData.postal_code || ""}
+              onChange={(e) => setFormData({ ...formData, postal_code: e.target.value })}
+            />
+          </div>
+          <Input
+            placeholder="Country"
+            value={formData.country || "US"}
+            onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="phone">Phone</Label>
+          <Input
+            id="phone"
+            value={formData.phone || ""}
+            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="phone_ext">Phone Extension</Label>
+          <Input
+            id="phone_ext"
+            value={formData.phone_ext || ""}
+            onChange={(e) => setFormData({ ...formData, phone_ext: e.target.value })}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            value={formData.email || ""}
+            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Manager Information</Label>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Input
+            placeholder="Manager Name"
+            value={formData.manager_name || ""}
+            onChange={(e) => setFormData({ ...formData, manager_name: e.target.value })}
+          />
+          <Input
+            placeholder="Manager Email"
+            type="email"
+            value={formData.manager_email || ""}
+            onChange={(e) => setFormData({ ...formData, manager_email: e.target.value })}
+          />
+          <Input
+            placeholder="Manager Phone"
+            value={formData.manager_phone || ""}
+            onChange={(e) => setFormData({ ...formData, manager_phone: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Business Hours</Label>
+        <div className="space-y-2 border rounded-lg p-4">
+          {days.map((day) => (
+            <div key={day} className="flex items-center gap-2">
+              <div className="w-24 text-sm capitalize">{day}</div>
+              <Switch
+                checked={!businessHours[day]?.closed}
+                onCheckedChange={(checked) => updateBusinessHours(day, 'closed', !checked)}
+              />
+              {!businessHours[day]?.closed && (
+                <>
+                  <Input
+                    type="time"
+                    value={businessHours[day]?.open || ""}
+                    onChange={(e) => updateBusinessHours(day, 'open', e.target.value)}
+                    className="w-32"
+                  />
+                  <span className="text-sm">to</span>
+                  <Input
+                    type="time"
+                    value={businessHours[day]?.close || ""}
+                    onChange={(e) => updateBusinessHours(day, 'close', e.target.value)}
+                    className="w-32"
+                  />
+                </>
+              )}
+              {businessHours[day]?.closed && (
+                <span className="text-sm text-muted-foreground">Closed</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-4">
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="is_primary"
+            checked={formData.is_primary || false}
+            onCheckedChange={(checked) => setFormData({ ...formData, is_primary: checked })}
+          />
+          <Label htmlFor="is_primary">Primary Location</Label>
+        </div>
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="is_active"
+            checked={formData.is_active !== false}
+            onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
+          />
+          <Label htmlFor="is_active">Active</Label>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="notes">Notes</Label>
+        <Textarea
+          id="notes"
+          value={formData.notes || ""}
+          onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+          rows={3}
+        />
+      </div>
+
+      <div className="flex gap-2">
+        <Button 
+          type="button" 
+          size="sm"
+          onClick={async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            await submitForm();
+          }}
+        >
+          {location.id ? "Update" : "Add"} Location
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+});
+
+DealerLocationForm.displayName = "DealerLocationForm";
+
+// Dealer Code Form Component
+function DealerCodeForm({
+  code,
+  makes,
+  makesCarried,
+  onSave,
+  onCancel,
+}: {
+  code: Partial<DealerCode>;
+  makes: Make[];
+  makesCarried?: string[];
+  onSave: (code: Partial<DealerCode>) => void;
+  onCancel: () => void;
+}) {
+  const [formData, setFormData] = useState<Partial<DealerCode>>(code);
+
+  // Update formData when code prop changes (for editing existing codes)
+  useEffect(() => {
+    setFormData(code);
+  }, [code]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave(formData);
+  };
+
+  // Normalize makesCarried - handle PostgreSQL text[] arrays and ensure it's a proper array
+  const normalizedMakesCarried = useMemo((): string[] => {
+    if (!makesCarried) return [];
+    // If it's already an array, use it
+    if (Array.isArray(makesCarried)) {
+      return makesCarried.map((m: any) => String(m).trim()).filter((m: string) => m.length > 0);
+    }
+    // If it's a string, try to parse it
+    const makesCarriedStr = typeof makesCarried === 'string' ? makesCarried : String(makesCarried);
+    try {
+      const parsed = JSON.parse(makesCarriedStr);
+      if (Array.isArray(parsed)) {
+        return parsed.map((m: any) => String(m).trim()).filter((m: string) => m.length > 0);
+      }
+    } catch {
+      // If parsing fails, treat as single value
+      const trimmed = makesCarriedStr.trim();
+      return trimmed.length > 0 ? [trimmed] : [];
+    }
+    return [];
+  }, [makesCarried]);
+
+  // Filter makes to only show those in makes_carried array
+  // If makesCarried is not provided or empty, show all makes
+  // If makesCarried is provided, only show makes that match (case-insensitive)
+  const availableMakes = normalizedMakesCarried.length > 0
+    ? makes.filter(make => 
+        normalizedMakesCarried.some(carried => 
+          carried.toLowerCase().trim() === make.make_name.toLowerCase().trim()
+        )
+      )
+    : makes;
+
+  // If editing an existing code, always include the current make even if not in makes_carried
+  const currentMake = formData.make ? makes.find(m => m.make_name === formData.make) : null;
+  const filteredMakes = currentMake && !availableMakes.find(m => m.id === currentMake.id)
+    ? [...availableMakes, currentMake]
+    : availableMakes;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="make">
+            Make / OEM <span className="text-destructive">*</span>
+          </Label>
+          <Select
+            value={formData.make || ""}
+            onValueChange={(value) => {
+              const selectedMake = makes.find(m => m.make_name === value);
+              setFormData({
+                ...formData,
+                make: value,
+                make_id: selectedMake?.id ? Number(selectedMake.id) : 0,
+              });
+            }}
+            disabled={filteredMakes.length === 0}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={filteredMakes.length === 0 ? "No makes available - add makes to 'Makes Carried' first" : "Select a make"} />
+            </SelectTrigger>
+            <SelectContent>
+              {filteredMakes.length === 0 ? (
+                <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                  No makes available. Please add makes to "Makes Carried" first.
+                </div>
+              ) : (
+                filteredMakes.map((make) => (
+                  <SelectItem key={make.id} value={make.make_name}>
+                    {make.make_name}
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+          {normalizedMakesCarried.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              Add makes to "Makes Carried" above to create dealer codes for them.
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="dealer_code">
+            Dealer Code <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id="dealer_code"
+            value={formData.dealer_code || ""}
+            onChange={(e) => setFormData({ ...formData, dealer_code: e.target.value })}
+            required
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="default_price_level">Default Price Level</Label>
+          <Input
+            id="default_price_level"
+            value={formData.default_price_level || "0"}
+            onChange={(e) => setFormData({ ...formData, default_price_level: e.target.value })}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="certified_date">Certified Date</Label>
+          <Input
+            id="certified_date"
+            type="date"
+            value={formData.certified_date ? new Date(formData.certified_date).toISOString().split('T')[0] : ""}
+            onChange={(e) => setFormData({ ...formData, certified_date: e.target.value || undefined })}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="certification_expires_at">Certification Expires</Label>
+          <Input
+            id="certification_expires_at"
+            type="date"
+            value={formData.certification_expires_at ? new Date(formData.certification_expires_at).toISOString().split('T')[0] : ""}
+            onChange={(e) => setFormData({ ...formData, certification_expires_at: e.target.value || undefined })}
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-4">
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="is_primary"
+            checked={formData.is_primary || false}
+            onCheckedChange={(checked) => setFormData({ ...formData, is_primary: checked })}
+          />
+          <Label htmlFor="is_primary">Primary Code</Label>
+        </div>
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="is_active"
+            checked={formData.is_active !== false}
+            onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
+          />
+          <Label htmlFor="is_active">Active</Label>
+        </div>
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="can_order_fleet"
+            checked={formData.can_order_fleet || false}
+            onCheckedChange={(checked) => setFormData({ ...formData, can_order_fleet: checked })}
+          />
+          <Label htmlFor="can_order_fleet">Can Order Fleet</Label>
+        </div>
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="can_order_government"
+            checked={formData.can_order_government || false}
+            onCheckedChange={(checked) => setFormData({ ...formData, can_order_government: checked })}
+          />
+          <Label htmlFor="can_order_government">Can Order Government</Label>
+        </div>
+        <div className="flex items-center space-x-2">
+          <Switch
+            id="uses_b4a"
+            checked={formData.uses_b4a !== false}
+            onCheckedChange={(checked) => setFormData({ ...formData, uses_b4a: checked })}
+          />
+          <Label htmlFor="uses_b4a">Uses B4A</Label>
+        </div>
+      </div>
+
+      {/* Program Tier/Status */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="certification_level">Certification Level</Label>
+          <Input
+            id="certification_level"
+            value={formData.certification_level || ""}
+            onChange={(e) => setFormData({ ...formData, certification_level: e.target.value || undefined })}
+            maxLength={50}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="annual_volume_commitment">Annual Volume Commitment</Label>
+          <Input
+            id="annual_volume_commitment"
+            type="number"
+            value={formData.annual_volume_commitment || ""}
+            onChange={(e) => setFormData({ ...formData, annual_volume_commitment: e.target.value ? parseInt(e.target.value) : undefined })}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="volume_tier">Volume Tier</Label>
+          <Input
+            id="volume_tier"
+            value={formData.volume_tier || ""}
+            onChange={(e) => setFormData({ ...formData, volume_tier: e.target.value || undefined })}
+            maxLength={50}
+          />
+        </div>
+      </div>
+
+      {/* Regional Assignments */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="region_code">Region Code</Label>
+          <Input
+            id="region_code"
+            value={formData.region_code || ""}
+            onChange={(e) => setFormData({ ...formData, region_code: e.target.value || undefined })}
+            maxLength={20}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="district_code">District Code</Label>
+          <Input
+            id="district_code"
+            value={formData.district_code || ""}
+            onChange={(e) => setFormData({ ...formData, district_code: e.target.value || undefined })}
+            maxLength={20}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="zone_manager_name">Zone Manager Name</Label>
+          <Input
+            id="zone_manager_name"
+            value={formData.zone_manager_name || ""}
+            onChange={(e) => setFormData({ ...formData, zone_manager_name: e.target.value || undefined })}
+            maxLength={100}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="zone_manager_email">Zone Manager Email</Label>
+          <Input
+            id="zone_manager_email"
+            type="email"
+            value={formData.zone_manager_email || ""}
+            onChange={(e) => setFormData({ ...formData, zone_manager_email: e.target.value || undefined })}
+            maxLength={255}
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-2">
+        <Button 
+          type="button" 
+          size="sm"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleSubmit(e as any);
+          }}
+        >
+          {code.id ? "Update" : "Add"} Dealer Code
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Helper function to calculate profile completion percentage
+function calculateProfileCompletion(profileData: CompleteProfile | undefined): number {
+  if (!profileData) return 0;
+  
+  let completed = 0;
+  let total = 0;
+  
+  // Personal Information (30%)
+  total += 3;
+  if (profileData.personal?.name) completed += 1;
+  if (profileData.personal?.email) completed += 1;
+  if (profileData.personal?.phone) completed += 1;
+  
+  // Organization Information (40%)
+  if (profileData.organization) {
+    total += 4;
+    if (profileData.organization.organization_name) completed += 1;
+    if (profileData.organization.organization_type_id) completed += 1;
+    if (profileData.organization.primary_email) completed += 1;
+    if (profileData.organization.address_line1 && profileData.organization.city) completed += 1;
+  } else {
+    total += 4; // Count as incomplete
+  }
+  
+  // Dealer Information (30% - only if dealer exists)
+  if (profileData.dealer) {
+    total += 3;
+    if (profileData.dealer.business_type) completed += 1;
+    if (profileData.dealer.dealer_license_number) completed += 1;
+    if (profileData.dealerCodes && profileData.dealerCodes.length > 0) completed += 1;
+  }
+  
+  return total > 0 ? Math.round((completed / total) * 100) : 0;
+}
 
 export default function Profile() {
   const { user, profile: userProfile, loading: userLoading } = useCurrentUser();
@@ -60,6 +1077,22 @@ export default function Profile() {
   const updateOrganizationMutation = trpc.profile.updateOrganization.useMutation() as any;
   const createOrganizationMutation = trpc.profile.createOrganization.useMutation() as any;
   const updateDealerMutation = trpc.profile.updateDealer.useMutation() as any;
+  const upsertDealerCodeMutation = trpc.profile.upsertDealerCode.useMutation() as any;
+  const deleteDealerCodeMutation = trpc.profile.deleteDealerCode.useMutation() as any;
+  const upsertDealerLocationMutation = trpc.profile.upsertDealerLocation.useMutation() as any;
+  const deleteDealerLocationMutation = trpc.profile.deleteDealerLocation.useMutation() as any;
+
+  // Load makes for dealer codes (will be enabled when dealer section is shown)
+  const { data: makesData } = trpc.profile.getMakes.useQuery(undefined, {
+    enabled: !!profileData?.dealer?.id,
+  }) as { data: Make[] | undefined };
+
+  // Check if user can create listings (for integration with listing workflow)
+  const { data: canCreateListings, refetch: refetchListingCapability } = trpc.user.canCreateListings.useQuery(undefined, {
+    enabled: !!user && !!profileData?.organization?.id,
+    retry: 1,
+    refetchOnWindowFocus: false,
+  });
 
   // Diagnostic query (only in development)
   const { data: diagnosticData } = trpc.profile.diagnose.useQuery(undefined, {
@@ -78,6 +1111,18 @@ export default function Profile() {
   const [territoryStateInput, setTerritoryStateInput] = useState("");
   const [certificationInput, setCertificationInput] = useState("");
   const [awardInput, setAwardInput] = useState("");
+  
+  // Tab state for section navigation (must be before early returns)
+  const [activeTab, setActiveTab] = useState("personal");
+  
+  // Auto-save state (must be before early returns)
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  
+  // Ref for dealer locations manager to trigger form submission
+  const dealerLocationsManagerRef = useRef<{ submit: () => Promise<void> }>(null);
+  
+  // Calculate profile completion (must be before early returns)
+  const profileCompletion = useMemo(() => calculateProfileCompletion(profileData), [profileData]);
 
   // Helper function to normalize business_hours - ensures all days are objects, not strings
   const normalizeBusinessHours = (rawHours: any): Record<string, { open: string; close: string; closed: boolean }> => {
@@ -144,20 +1189,33 @@ export default function Profile() {
       hasOrganization: !!profileData.organization,
       organizationId: profileData.organization?.id,
       organizationName: profileData.organization?.organization_name,
+      avatar: profileData.personal?.avatar,
     });
 
     // Load personal information
     if (profileData.personal) {
-      setPersonalFormData({
-        id: profileData.personal.id,
-        email: profileData.personal.email || "",
-        name: profileData.personal.name || "",
-        phone: profileData.personal.phone || "",
-        bio: profileData.personal.bio || "",
-        emailNotifications: profileData.personal.emailNotifications ?? true,
-        marketingEmails: profileData.personal.marketingEmails ?? false,
-        createdAt: profileData.personal.createdAt,
-        lastSignInAt: profileData.personal.lastSignInAt,
+      setPersonalFormData(prev => {
+        // Only update if the data has actually changed to avoid unnecessary re-renders
+        const newAvatar = profileData.personal.avatar || "";
+        if (prev && prev.avatar === newAvatar && 
+            prev.name === (profileData.personal.name || "") &&
+            prev.email === (profileData.personal.email || "")) {
+          // Data hasn't changed, return existing state
+          return prev;
+        }
+        
+        return {
+          id: profileData.personal.id,
+          email: profileData.personal.email || "",
+          name: profileData.personal.name || "",
+          phone: profileData.personal.phone || "",
+          bio: profileData.personal.bio || "",
+          avatar: newAvatar,
+          emailNotifications: profileData.personal.emailNotifications ?? true,
+          marketingEmails: profileData.personal.marketingEmails ?? false,
+          createdAt: profileData.personal.createdAt,
+          lastSignInAt: profileData.personal.lastSignInAt,
+        };
       });
     }
     
@@ -227,6 +1285,11 @@ export default function Profile() {
 
     // Load dealer information
     if (profileData.dealer?.id) {
+      // Normalize business_hours for dealer if it exists
+      const normalizedDealerBusinessHours = profileData.dealer.business_hours 
+        ? normalizeBusinessHours(profileData.dealer.business_hours)
+        : undefined;
+
       setDealerFormData({
         business_type: profileData.dealer.business_type || undefined,
         dealer_license_number: profileData.dealer.dealer_license_number || "",
@@ -260,6 +1323,37 @@ export default function Profile() {
         inquiry_email_notification: profileData.dealer.inquiry_email_notification,
         weekly_performance_report: profileData.dealer.weekly_performance_report,
         allow_price_negotiations: profileData.dealer.allow_price_negotiations,
+        dealer_code: profileData.dealer.dealer_code || "",
+        ford_dealer_code: profileData.dealer.ford_dealer_code || "",
+        default_price_level: profileData.dealer.default_price_level || "",
+        can_order_fleet: profileData.dealer.can_order_fleet ?? false,
+        can_order_government: profileData.dealer.can_order_government ?? false,
+        uses_b4a: profileData.dealer.uses_b4a ?? true,
+        floor_plan_company: profileData.dealer.floor_plan_company || "",
+        floor_plan_account: profileData.dealer.floor_plan_account || "",
+        floor_plan_limit: profileData.dealer.floor_plan_limit,
+        typical_days_to_floor: profileData.dealer.typical_days_to_floor,
+        average_turn_days: profileData.dealer.average_turn_days,
+        b4a_account_number: profileData.dealer.b4a_account_number || "",
+        b4a_enrollment_date: profileData.dealer.b4a_enrollment_date ? 
+          new Date(profileData.dealer.b4a_enrollment_date).toISOString().split('T')[0] : "",
+        fein_number: profileData.dealer.fein_number || "",
+        sam_registration: profileData.dealer.sam_registration ?? false,
+        sam_expiration_date: profileData.dealer.sam_expiration_date ? 
+          new Date(profileData.dealer.sam_expiration_date).toISOString().split('T')[0] : "",
+        cage_code: profileData.dealer.cage_code || "",
+        ford_pro_elite: profileData.dealer.ford_pro_elite ?? false,
+        gm_fleet_certified: profileData.dealer.gm_fleet_certified ?? false,
+        ram_commercial_certified: profileData.dealer.ram_commercial_certified ?? false,
+        preferred_upfitter_ids: profileData.dealer.preferred_upfitter_ids || [],
+        upfit_delivery_coordination: profileData.dealer.upfit_delivery_coordination ?? false,
+        primary_contact_name: profileData.dealer.primary_contact_name || "",
+        primary_contact_title: profileData.dealer.primary_contact_title || "",
+        primary_contact_phone: profileData.dealer.primary_contact_phone || "",
+        primary_contact_email: profileData.dealer.primary_contact_email || "",
+        dms_dealer_id: profileData.dealer.cdk_dealer_id || profileData.dealer.reynolds_dealer_id || "",
+        dms_provider: profileData.dealer.dms_provider || "",
+        business_hours: normalizedDealerBusinessHours,
       });
     } else {
       // Reset dealer form if no dealer exists
@@ -295,6 +1389,35 @@ export default function Profile() {
         inquiry_email_notification: false,
         weekly_performance_report: false,
         allow_price_negotiations: false,
+        dealer_code: "",
+        ford_dealer_code: "",
+        default_price_level: "",
+        can_order_fleet: false,
+        can_order_government: false,
+        uses_b4a: true,
+        floor_plan_company: "",
+        floor_plan_account: "",
+        floor_plan_limit: undefined,
+        typical_days_to_floor: undefined,
+        average_turn_days: undefined,
+        b4a_account_number: "",
+        b4a_enrollment_date: "",
+        fein_number: "",
+        sam_registration: false,
+        sam_expiration_date: "",
+        cage_code: "",
+        ford_pro_elite: false,
+        gm_fleet_certified: false,
+        ram_commercial_certified: false,
+        preferred_upfitter_ids: [],
+        upfit_delivery_coordination: false,
+        primary_contact_name: "",
+        primary_contact_title: "",
+        primary_contact_phone: "",
+        primary_contact_email: "",
+        dms_dealer_id: "",
+        dms_provider: "",
+        business_hours: undefined,
       });
     }
   }, [profileData, isSaving]);
@@ -307,7 +1430,32 @@ export default function Profile() {
       return;
     }
     
+    // If we're on the locations tab, trigger the location form submission instead
+    if (activeTab === "locations" && dealerLocationsManagerRef.current) {
+      setIsSaving(true);
+      setAutoSaveStatus("saving");
+      try {
+        await dealerLocationsManagerRef.current.submit();
+        setAutoSaveStatus("saved");
+        toast.success("Location saved successfully!");
+        // Small delay to ensure database commit completes, then refetch profile data
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await refetchProfile();
+        // Reset auto-save status after 3 seconds
+        setTimeout(() => setAutoSaveStatus("idle"), 3000);
+      } catch (error: any) {
+        console.error("Failed to save location:", error);
+        const errorMessage = error?.message || error?.data?.message || "Failed to save location";
+        toast.error(errorMessage);
+        setAutoSaveStatus("idle");
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+    
     setIsSaving(true);
+    setAutoSaveStatus("saving");
     
     try {
       // Update personal information
@@ -316,6 +1464,7 @@ export default function Profile() {
           name: personalFormData.name,
           phone: personalFormData.phone,
           bio: personalFormData.bio,
+          avatar: personalFormData.avatar,
           emailNotifications: personalFormData.emailNotifications,
           marketingEmails: personalFormData.marketingEmails,
         });
@@ -408,13 +1557,32 @@ export default function Profile() {
         }
       }
 
-      // Update dealer if needed
-      
+      // Update dealer if needed - only if dealer exists and we have dealer data
+      // Don't update dealer if we're only updating personal info
       const selectedOrgType = orgTypesData?.find((t: OrganizationType) => t.id === orgFormData.organization_type_id);
       const needsDealer = selectedOrgType?.can_list_vehicles || !!profileData?.dealer;
+      const hasDealerData = profileData?.dealer?.id && dealerFormData;
+      
+      // Check if dealer form has any meaningful data (not just empty defaults)
+      const hasDealerFormData = hasDealerData && (
+        dealerFormData.business_type ||
+        dealerFormData.dealer_license_number ||
+        dealerFormData.dealer_code ||
+        dealerFormData.ford_dealer_code ||
+        (dealerFormData.specializations && dealerFormData.specializations.length > 0) ||
+        (dealerFormData.makes_carried && dealerFormData.makes_carried.length > 0) ||
+        dealerFormData.average_inventory_count ||
+        dealerFormData.lot_capacity
+      );
 
-      if (canManageOrg && organizationId && needsDealer) {
-        await updateDealerMutation.mutateAsync({
+      // Only update dealer if:
+      // 1. User can manage org
+      // 2. Organization exists
+      // 3. Dealer is needed (org type requires it or dealer exists)
+      // 4. Dealer data actually exists AND has meaningful data (don't try to update if dealer doesn't exist yet or form is empty)
+      if (canManageOrg && organizationId && needsDealer && hasDealerFormData) {
+        try {
+          await updateDealerMutation.mutateAsync({
           organizationId: organizationId,
             business_type: dealerFormData.business_type || undefined,
             dealer_license_number: dealerFormData.dealer_license_number || undefined,
@@ -447,13 +1615,74 @@ export default function Profile() {
             inquiry_email_notification: dealerFormData.inquiry_email_notification,
             weekly_performance_report: dealerFormData.weekly_performance_report,
             allow_price_negotiations: dealerFormData.allow_price_negotiations,
+            dealer_code: dealerFormData.dealer_code || undefined,
+            ford_dealer_code: dealerFormData.ford_dealer_code || undefined,
+            default_price_level: dealerFormData.default_price_level || undefined,
+            can_order_fleet: dealerFormData.can_order_fleet,
+            can_order_government: dealerFormData.can_order_government,
+            uses_b4a: dealerFormData.uses_b4a,
+            floor_plan_company: dealerFormData.floor_plan_company || undefined,
+            floor_plan_account: dealerFormData.floor_plan_account || undefined,
+            floor_plan_limit: dealerFormData.floor_plan_limit,
+            typical_days_to_floor: dealerFormData.typical_days_to_floor,
+            average_turn_days: dealerFormData.average_turn_days,
+            b4a_account_number: dealerFormData.b4a_account_number || undefined,
+            b4a_enrollment_date: dealerFormData.b4a_enrollment_date || undefined,
+            fein_number: dealerFormData.fein_number || undefined,
+            sam_registration: dealerFormData.sam_registration,
+            sam_expiration_date: dealerFormData.sam_expiration_date || undefined,
+            cage_code: dealerFormData.cage_code || undefined,
+            ford_pro_elite: dealerFormData.ford_pro_elite,
+            gm_fleet_certified: dealerFormData.gm_fleet_certified,
+            ram_commercial_certified: dealerFormData.ram_commercial_certified,
+            preferred_upfitter_ids: (dealerFormData.preferred_upfitter_ids || []).length > 0 ? dealerFormData.preferred_upfitter_ids : undefined,
+            upfit_delivery_coordination: dealerFormData.upfit_delivery_coordination,
+            primary_contact_name: dealerFormData.primary_contact_name || undefined,
+            primary_contact_title: dealerFormData.primary_contact_title || undefined,
+            primary_contact_phone: dealerFormData.primary_contact_phone || undefined,
+            primary_contact_email: dealerFormData.primary_contact_email || undefined,
+            cdk_dealer_id: dealerFormData.dms_dealer_id || undefined,
+            dms_provider: dealerFormData.dms_provider || undefined,
+            business_hours: dealerFormData.business_hours && Object.keys(dealerFormData.business_hours).length > 0 
+              ? normalizeBusinessHours(dealerFormData.business_hours) 
+              : undefined,
           });
+        } catch (dealerError: any) {
+          // Log dealer update error but don't fail the entire update
+          console.error("Failed to update dealer (non-critical):", dealerError);
+          // Show warning but don't throw - personal and org updates may have succeeded
+          toast.warning("Profile updated, but dealer information update failed. Please try updating dealer information separately.");
+        }
       }
       
       toast.success("Profile updated successfully!");
+      setAutoSaveStatus("saved");
       
-      // Refetch profile data
+      // Small delay to ensure database commit completes, then refetch profile data
+      await new Promise(resolve => setTimeout(resolve, 100));
       await refetchProfile();
+      
+      // Reset auto-save status after 3 seconds
+      setTimeout(() => setAutoSaveStatus("idle"), 3000);
+      
+      // Refetch listing capability status after profile update
+      if (profileData?.organization?.id) {
+        setTimeout(() => {
+          refetchListingCapability();
+        }, 200);
+      }
+      
+      // Set flag for listing page to auto-refresh when user returns
+      sessionStorage.setItem('returnedFromProfile', 'true');
+      
+      // If organization type allows listings and dealer was created/updated, 
+      // show success message about listing capability
+      // Reuse selectedOrgType from earlier in the function
+      if (selectedOrgType?.can_list_vehicles && organizationId) {
+        toast.success("Your dealer profile has been saved! You can now create vehicle listings.", {
+          duration: 5000,
+        });
+      }
     } catch (error: any) {
       console.error("Failed to update profile:", error);
       
@@ -476,6 +1705,7 @@ export default function Profile() {
       }
       
       toast.error(errorMessage);
+      setAutoSaveStatus("idle");
     } finally {
       setIsSaving(false);
     }
@@ -654,70 +1884,365 @@ export default function Profile() {
   const userRole = profileData?.account?.role || userProfile?.role;
   const canManageOrg = userRole === 'owner' || userRole === 'admin';
   const selectedOrgType = orgTypesData?.find((t: OrganizationType) => t.id === orgFormData.organization_type_id);
+  
+  // Get current organization type from profile data or selected type
+  const currentOrgType = profileData?.organization?.organizationType || 
+    (profileData?.organization?.organization_type_id 
+      ? orgTypesData?.find((t: OrganizationType) => t.id === profileData.organization?.organization_type_id)
+      : null) ||
+    selectedOrgType;
+  
+  // Check if current organization type is a dealer/seller type
+  const isDealerOrgType = currentOrgType && (
+    currentOrgType.type_code?.toLowerCase().includes('dealer') ||
+    currentOrgType.type_code?.toLowerCase().includes('seller') ||
+    currentOrgType.display_name?.toLowerCase().includes('dealer') ||
+    currentOrgType.display_name?.toLowerCase().includes('seller')
+  );
+  
   const needsDealer = selectedOrgType?.can_list_vehicles || !!profileData?.dealer;
   
   // Always show organization section for logged-in users
   // The "Admin Only" badge indicates it's restricted, backend enforces permissions
   const showOrganizationSection = !!user;
   
-  // Show dealer section if user is logged in and any of these conditions:
-  // 1. User can manage org (owner/admin), OR
-  // 2. User has an organization, OR
-  // 3. User has a dealer record, OR
-  // 4. Selected org type requires dealer
-  const showDealerSection = !!user && (
-    canManageOrg || 
-    !!profileData?.organization?.id || 
-    !!profileData?.dealer ||
-    !!selectedOrgType?.can_list_vehicles
-  );
+  // Show dealer section only if user is logged in AND organization type is dealer
+  const showDealerSection = !!user && !!isDealerOrgType;
 
   return (
+    <SidebarProvider>
     <div className="min-h-screen flex flex-col">
       <Navigation />
       
-      <main className="flex-1 py-12 bg-gray-50">
-        <div className="container max-w-4xl">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">My Profile</h1>
-            <p className="text-gray-600 mt-2">
-              Manage your account settings, organization, and dealership information
-            </p>
+        <div className="flex flex-1">
+          {/* Sidebar Navigation */}
+          <Sidebar collapsible="icon" variant="inset">
+            <SidebarHeader className="border-b">
+              {personalFormData && (
+                <div className="flex items-center gap-3 px-2 py-4">
+                  <Avatar className="h-10 w-10">
+                    <AvatarImage src={personalFormData?.avatar || (personalFormData?.email ? `https://api.dicebear.com/7.x/initials/svg?seed=${personalFormData.name || personalFormData.email}` : undefined)} />
+                    <AvatarFallback>
+                      {personalFormData?.name?.charAt(0) || personalFormData?.email?.charAt(0) || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm truncate">{personalFormData?.name || "User"}</p>
+                    <p className="text-xs text-muted-foreground truncate">{personalFormData?.email || ""}</p>
+                  </div>
+                </div>
+              )}
+              <Separator />
+              <div className="px-2 py-3 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Profile Complete</span>
+                  <span className="font-medium">{profileCompletion}%</span>
+                </div>
+                <Progress value={profileCompletion} className="h-2" />
+              </div>
+            </SidebarHeader>
+            <SidebarContent>
+              <SidebarGroup>
+                <SidebarGroupLabel>Profile Sections</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        onClick={() => setActiveTab("personal")}
+                        isActive={activeTab === "personal"}
+                      >
+                        <User className="h-4 w-4" />
+                        <span>Personal</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    {showOrganizationSection && (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          onClick={() => setActiveTab("organization")}
+                          isActive={activeTab === "organization"}
+                          disabled={!canManageOrg}
+                        >
+                          <Building className="h-4 w-4" />
+                          <span>Organization</span>
+                          {!canManageOrg && (
+                            <Badge variant="outline" className="ml-auto text-xs">Admin</Badge>
+                          )}
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )}
+                    <>
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          onClick={() => isDealerOrgType && setActiveTab("capabilities")}
+                          isActive={activeTab === "capabilities"}
+                          disabled={!isDealerOrgType}
+                          className={!isDealerOrgType ? "opacity-50 cursor-not-allowed" : ""}
+                        >
+                          <Zap className="h-4 w-4" />
+                          <span>Dealer Capabilities</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          onClick={() => isDealerOrgType && setActiveTab("dealer-codes")}
+                          isActive={activeTab === "dealer-codes"}
+                          disabled={!isDealerOrgType}
+                          className={!isDealerOrgType ? "opacity-50 cursor-not-allowed" : ""}
+                        >
+                          <FileText className="h-4 w-4" />
+                          <span>OEM Dealer Codes</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          onClick={() => setActiveTab("locations")}
+                          isActive={activeTab === "locations"}
+                        >
+                          <MapPin className="h-4 w-4" />
+                          <span>Locations</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                      {showDealerSection && (
+                        <>
+                        <SidebarMenuItem>
+                          <SidebarMenuButton
+                            onClick={() => setActiveTab("fleet-government")}
+                            isActive={activeTab === "fleet-government"}
+                          >
+                            <Truck className="h-4 w-4" />
+                            <span>Fleet & Government</span>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                        </>
+                      )}
+                    </>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        onClick={() => setActiveTab("notifications")}
+                        isActive={activeTab === "notifications"}
+                      >
+                        <Bell className="h-4 w-4" />
+                        <span>Notifications</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        onClick={() => setActiveTab("account")}
+                        isActive={activeTab === "account"}
+                      >
+                        <Settings className="h-4 w-4" />
+                        <span>Account</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            </SidebarContent>
+          </Sidebar>
+          
+          {/* Main Content */}
+          <SidebarInset className="flex-1">
+            <div className="flex h-full flex-col">
+              {/* Sticky Header */}
+              <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                <div className="flex h-14 items-center gap-4 px-6">
+                  <SidebarTrigger />
+                  <Separator orientation="vertical" />
+                  <div className="flex flex-1 items-center justify-between">
+                    <div>
+                      <h1 className="text-xl font-semibold">My Profile</h1>
+                      <p className="text-sm text-muted-foreground">
+                        {activeTab === "personal" && "Manage your personal information"}
+                        {activeTab === "organization" && "Organization details and settings"}
+                        {activeTab === "capabilities" && "Dealer capabilities and services"}
+                        {activeTab === "dealer-codes" && "OEM dealer codes and certifications"}
+                        {activeTab === "locations" && "Dealership locations"}
+                        {activeTab === "fleet-government" && "Fleet and government programs"}
+                        {activeTab === "notifications" && "Notification preferences"}
+                        {activeTab === "account" && "Account information"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {autoSaveStatus === "saving" && (
+                        <Badge variant="outline" className="gap-1">
+                          <Clock className="h-3 w-3 animate-spin" />
+                          Saving...
+                        </Badge>
+                      )}
+                      {autoSaveStatus === "saved" && (
+                        <Badge variant="outline" className="gap-1 text-green-600">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Saved
+                        </Badge>
+                      )}
+                      <Button
+                        type="submit"
+                        form="profile-form"
+                        disabled={isSaving || profileLoading}
+                        className="gap-2"
+                      >
+                        <Save className="h-4 w-4" />
+                        {isSaving ? "Saving..." : "Save Changes"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Content Area */}
+              <div className="flex-1 overflow-auto">
+                <div className="container max-w-5xl py-6 px-6">
+                  <form id="profile-form" onSubmit={handleSubmit} className="space-y-6">
             {/* Personal Information */}
-            {personalFormData && (
+                    {activeTab === "personal" && personalFormData && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <User className="h-5 w-5" />
                   Personal Information
                 </CardTitle>
+                          <CardDescription>
+                            Update your personal details and profile information
+                          </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+                        <CardContent className="space-y-6">
+                          {/* Avatar Upload */}
+                          <div className="flex items-center gap-6">
+                            <Avatar className="h-24 w-24">
+                              <AvatarImage src={personalFormData.avatar || (personalFormData.email ? `https://api.dicebear.com/7.x/initials/svg?seed=${personalFormData.name || personalFormData.email}` : undefined)} />
+                              <AvatarFallback className="text-2xl">
+                                {personalFormData.name?.charAt(0) || personalFormData.email?.charAt(0) || "U"}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 space-y-2">
+                              <Label>Profile Photo</Label>
+                              <ImageUpload
+                                label="Upload Avatar"
+                                value={personalFormData?.avatar || ""}
+                                onChange={async (url) => {
+                                  if (personalFormData) {
+                                    // Update local state immediately for instant UI feedback
+                                    setPersonalFormData({ ...personalFormData, avatar: url });
+                                    
+                                    // Auto-save avatar when uploaded
+                                    try {
+                                      setAutoSaveStatus("saving");
+                                      await updatePersonalMutation.mutateAsync({
+                                        name: personalFormData.name,
+                                        phone: personalFormData.phone,
+                                        bio: personalFormData.bio,
+                                        avatar: url,
+                                        emailNotifications: personalFormData.emailNotifications,
+                                        marketingEmails: personalFormData.marketingEmails,
+                                      });
+                                      
+                                      setAutoSaveStatus("saved");
+                                      toast.success("Profile photo saved");
+                                      
+                                      // Refetch profile to sync with backend
+                                      // Add cache-busting timestamp to ensure fresh data
+                                      const { data: updatedProfile } = await refetchProfile();
+                                      
+                                      // Update local state from refetched data to ensure consistency
+                                      if (updatedProfile?.personal?.avatar) {
+                                        setPersonalFormData(prev => prev ? { ...prev, avatar: updatedProfile.personal.avatar } : null);
+                                      }
+                                      
+                                      setAutoSaveStatus("idle");
+                                    } catch (error: any) {
+                                      setAutoSaveStatus("idle");
+                                      toast.error(error.message || "Failed to save profile photo");
+                                    }
+                                  }
+                                }}
+                                onRemove={async () => {
+                                  if (personalFormData) {
+                                    // Update local state immediately
+                                    setPersonalFormData({ ...personalFormData, avatar: "" });
+                                    
+                                    // Auto-save when avatar is removed
+                                    try {
+                                      setAutoSaveStatus("saving");
+                                      await updatePersonalMutation.mutateAsync({
+                                        name: personalFormData.name,
+                                        phone: personalFormData.phone,
+                                        bio: personalFormData.bio,
+                                        avatar: "",
+                                        emailNotifications: personalFormData.emailNotifications,
+                                        marketingEmails: personalFormData.marketingEmails,
+                                      });
+                                      
+                                      setAutoSaveStatus("saved");
+                                      toast.success("Profile photo removed");
+                                      
+                                      // Refetch profile to sync with backend
+                                      const { data: updatedProfile } = await refetchProfile();
+                                      
+                                      // Update local state from refetched data to ensure consistency
+                                      if (updatedProfile?.personal) {
+                                        setPersonalFormData(prev => prev ? { ...prev, avatar: updatedProfile.personal.avatar || "" } : null);
+                                      }
+                                      
+                                      setAutoSaveStatus("idle");
+                                    } catch (error: any) {
+                                      setAutoSaveStatus("idle");
+                                      toast.error(error.message || "Failed to remove profile photo");
+                                    }
+                                  }
+                                }}
+                                maxSizeMB={2}
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                Recommended: Square image, at least 200x200 pixels
+                              </p>
+                            </div>
+                          </div>
+                          
+                          <Separator />
+                          
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="name">Full Name</Label>
+                              <Label htmlFor="name">
+                                Full Name <span className="text-destructive">*</span>
+                              </Label>
                     <Input
                       id="name"
                         value={personalFormData.name}
                         onChange={(e) => setPersonalFormData({ ...personalFormData, name: e.target.value })}
+                                placeholder="Enter your full name"
                     />
                   </div>
                   
                   <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
+                              <Label htmlFor="email">Email Address</Label>
+                              <div className="relative">
                     <Input
                       id="email"
                       type="email"
                         value={personalFormData.email || ""}
                       disabled
                       readOnly
-                      className="cursor-not-allowed opacity-60"
-                    />
+                                  className="cursor-not-allowed opacity-60 pr-10"
+                                />
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                        {profileData?.personal?.email ? (
+                                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                                        ) : (
+                                          <AlertCircle className="h-4 w-4 text-amber-600" />
+                                        )}
+                                      </div>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      {profileData?.personal?.email ? "Email verified" : "Email not verified"}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
                     <p className="text-xs text-muted-foreground">
-                      Email cannot be changed
+                                Email cannot be changed. Contact support if you need to update it.
                     </p>
                   </div>
                 </div>
@@ -728,6 +2253,7 @@ export default function Profile() {
                     id="phone"
                       value={personalFormData.phone}
                       onChange={(e) => setPersonalFormData({ ...personalFormData, phone: e.target.value })}
+                              placeholder="(555) 123-4567"
                   />
                 </div>
 
@@ -738,21 +2264,59 @@ export default function Profile() {
                       value={personalFormData.bio}
                       onChange={(e) => setPersonalFormData({ ...personalFormData, bio: e.target.value })}
                     rows={4}
+                              placeholder="Tell us about yourself..."
+                              maxLength={1000}
                   />
+                            <p className="text-xs text-muted-foreground">
+                              {personalFormData.bio.length}/1000 characters
+                            </p>
                 </div>
+                          
+                          {profileData?.personal?.lastSignInAt && (
+                            <div className="pt-4 border-t">
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-muted-foreground">Last Sign In</span>
+                                <span className="font-medium">
+                                  {new Date(profileData.personal.lastSignInAt).toLocaleString()}
+                                </span>
+                              </div>
+                            </div>
+                          )}
               </CardContent>
             </Card>
             )}
 
             {/* Organization Information */}
-            {showOrganizationSection && (
+                    {activeTab === "organization" && showOrganizationSection && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
                     <Building className="h-5 w-5" />
-                    Organization Information
+                              <CardTitle>Organization Information</CardTitle>
+                              {!canManageOrg && (
                     <Badge variant="secondary" className="ml-2">Admin Only</Badge>
-                  </CardTitle>
+                              )}
+                            </div>
+                            {profileData?.organization && (
+                              <div className="flex items-center gap-2">
+                                <Badge 
+                                  variant={
+                                    profileData.organization.status === 'active' ? "default" :
+                                    profileData.organization.status === 'pending_verification' ? "secondary" :
+                                    "destructive"
+                                  }
+                                >
+                                  {profileData.organization.status === 'active' && <CheckCircle2 className="h-3 w-3 mr-1" />}
+                                  {profileData.organization.status === 'pending_verification' && <Clock className="h-3 w-3 mr-1" />}
+                                  {profileData.organization.status || 'Unknown'}
+                                </Badge>
+                                <Badge variant="outline">
+                                  {profileData.organization.subscription_tier || 'free'}
+                                </Badge>
+                              </div>
+                            )}
+                          </div>
                   <CardDescription>
                     Manage your organization's details and settings
                   </CardDescription>
@@ -826,7 +2390,9 @@ export default function Profile() {
                   )}
 
                   <div className="space-y-2">
-                    <Label htmlFor="organization_type_id">Organization Type *</Label>
+                    <Label htmlFor="organization_type_id">
+                      Organization Type <span className="text-destructive">*</span>
+                    </Label>
                     <Select
                       value={orgFormData.organization_type_id?.toString() || ""}
                       onValueChange={(value) => {
@@ -854,7 +2420,9 @@ export default function Profile() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="organization_name">Organization Name *</Label>
+                      <Label htmlFor="organization_name">
+                        Organization Name <span className="text-destructive">*</span>
+                      </Label>
                       <Input
                         id="organization_name"
                         value={orgFormData.organization_name || ""}
@@ -883,7 +2451,9 @@ export default function Profile() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="primary_email">Primary Email *</Label>
+                      <Label htmlFor="primary_email">
+                        Primary Email <span className="text-destructive">*</span>
+                      </Label>
                       <Input
                         id="primary_email"
                         type="email"
@@ -1166,27 +2736,38 @@ export default function Profile() {
               </Card>
             )}
 
-            {/* Dealership Information */}
-            {showDealerSection && (
+                    {/* Dealer Capabilities Tab */}
+                    {activeTab === "capabilities" && (
               <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Store className="h-5 w-5" />
-                    Dealership Information
-                    <Badge variant="secondary" className="ml-2">Admin Only</Badge>
-                  </CardTitle>
-                  <CardDescription>
-                    Manage your dealership's business details and capabilities
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {!profileData?.dealer && (
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <Zap className="h-5 w-5" />
+                            Dealer Capabilities
+                          </CardTitle>
+                          <CardDescription>
+                            Configure your dealership's services, capabilities, and business information
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                          {!isDealerOrgType && (
+                            <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 p-4 rounded-md text-sm text-yellow-900 dark:text-yellow-100">
+                              <p className="font-medium mb-1">Dealer/Seller Organization Type Required</p>
+                              <p className="text-xs">Please select "Dealer" or "Seller" as your organization type in the Organization section to access dealer capabilities.</p>
+                            </div>
+                          )}
+                          {!profileData?.dealer && isDealerOrgType && (
                     <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 p-3 rounded-md text-sm text-blue-900 dark:text-blue-100">
                       <p className="font-medium mb-1">No dealer record found</p>
                       <p className="text-xs">Your organization type requires a dealer record. Fill out the form below and save to create one.</p>
                     </div>
                   )}
 
+                          {/* Basic Dealership Information */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Store className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Basic Information</Label>
+                            </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="business_type">Business Type</Label>
@@ -1195,7 +2776,7 @@ export default function Profile() {
                         onValueChange={(value: any) => setDealerFormData({ ...dealerFormData, business_type: value })}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="" />
+                                    <SelectValue placeholder="Select business type" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="franchise_dealer">Franchise Dealer</SelectItem>
@@ -1217,15 +2798,15 @@ export default function Profile() {
                       />
                     </div>
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="dealer_license_state">Dealer License State</Label>
                       <Input
                         id="dealer_license_state"
                         value={dealerFormData.dealer_license_state || ""}
-                        onChange={(e) => setDealerFormData({ ...dealerFormData, dealer_license_state: e.target.value })}
+                                  onChange={(e) => setDealerFormData({ ...dealerFormData, dealer_license_state: e.target.value.toUpperCase() })}
                         maxLength={2}
+                                  placeholder="CA"
                       />
                     </div>
                     <div className="space-y-2">
@@ -1238,7 +2819,6 @@ export default function Profile() {
                       />
                     </div>
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="dealer_tax_id">Tax ID / EIN</Label>
@@ -1257,7 +2837,6 @@ export default function Profile() {
                       />
                     </div>
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="average_inventory_count">Average Inventory Count</Label>
@@ -1276,9 +2855,18 @@ export default function Profile() {
                         value={dealerFormData.lot_capacity || ""}
                         onChange={(e) => setDealerFormData({ ...dealerFormData, lot_capacity: e.target.value ? parseInt(e.target.value) : undefined })}
                       />
+                              </div>
                     </div>
                   </div>
 
+                          <Separator />
+
+                          {/* Specializations and Makes */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Briefcase className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Specializations & Makes</Label>
+                            </div>
                   <div className="space-y-2">
                     <Label>Specializations</Label>
                     <div className="flex gap-2">
@@ -1291,6 +2879,7 @@ export default function Profile() {
                             addSpecialization();
                           }
                         }}
+                                  placeholder="Add specialization"
                       />
                       <Button type="button" onClick={addSpecialization} variant="outline">
                         Add
@@ -1306,14 +2895,13 @@ export default function Profile() {
                               onClick={() => removeSpecialization(index)}
                               className="ml-1 hover:text-destructive"
                             >
-                              ×
+                                        <X className="h-3 w-3" />
                             </button>
                           </Badge>
                         ))}
                       </div>
                     )}
                   </div>
-
                   <div className="space-y-2">
                     <Label>Makes Carried</Label>
                     <div className="flex gap-2">
@@ -1326,6 +2914,7 @@ export default function Profile() {
                             addMake();
                           }
                         }}
+                                  placeholder="Add make"
                       />
                       <Button type="button" onClick={addMake} variant="outline">
                         Add
@@ -1341,33 +2930,33 @@ export default function Profile() {
                               onClick={() => removeMake(index)}
                               className="ml-1 hover:text-destructive"
                             >
-                              ×
+                                        <X className="h-3 w-3" />
                             </button>
                           </Badge>
                         ))}
                       </div>
                     )}
+                            </div>
                   </div>
 
-                  {/* Toggle switches for dealer capabilities */}
+                          <Separator />
+
+                          {/* Sales Capabilities */}
                   <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Store className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Sales Capabilities</Label>
+                            </div>
+                            <div className="space-y-3">
                     {[
-                      { key: 'has_service_department', label: 'Service Department', desc: 'Does your dealership have a service department?' },
-                      { key: 'has_parts_department', label: 'Parts Department', desc: 'Does your dealership have a parts department?' },
-                      { key: 'can_install_upfits', label: 'Can Install Upfits', desc: 'Can your dealership install upfitting equipment?' },
-                      { key: 'has_body_shop', label: 'Body Shop', desc: 'Does your dealership have a body shop?' },
                       { key: 'can_special_order', label: 'Can Special Order', desc: 'Can you place special orders for customers?' },
                       { key: 'accepts_trade_ins', label: 'Accepts Trade-Ins', desc: 'Do you accept trade-in vehicles?' },
-                      { key: 'delivery_available', label: 'Delivery Available', desc: 'Do you offer vehicle delivery service?' },
                       { key: 'accepts_fleet_inquiries', label: 'Accepts Fleet Inquiries', desc: 'Do you accept fleet sales inquiries?' },
-                      { key: 'auto_respond_inquiries', label: 'Auto-Respond to Inquiries', desc: 'Automatically respond to customer inquiries?' },
-                      { key: 'inquiry_email_notification', label: 'Email Notifications', desc: 'Receive email notifications for inquiries?' },
-                      { key: 'weekly_performance_report', label: 'Weekly Performance Report', desc: 'Receive weekly performance reports?' },
                       { key: 'allow_price_negotiations', label: 'Allow Price Negotiations', desc: 'Allow customers to negotiate prices?' },
                     ].map(({ key, label, desc }) => (
-                      <div key={key} className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                          <Label htmlFor={key}>{label}</Label>
+                                <div key={key} className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                                  <div className="space-y-0.5 flex-1">
+                                    <Label htmlFor={key} className="text-base">{label}</Label>
                           <p className="text-sm text-muted-foreground">{desc}</p>
                       </div>
                       <Switch
@@ -1379,9 +2968,62 @@ export default function Profile() {
                       />
                     </div>
                     ))}
+                            </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <Separator />
+
+                          {/* Service Capabilities */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Settings className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Service Capabilities</Label>
+                            </div>
+                            <div className="space-y-3">
+                              {[
+                                { key: 'has_service_department', label: 'Service Department', desc: 'Does your dealership have a service department?' },
+                                { key: 'has_parts_department', label: 'Parts Department', desc: 'Does your dealership have a parts department?' },
+                                { key: 'has_body_shop', label: 'Body Shop', desc: 'Does your dealership have a body shop?' },
+                                { key: 'can_install_upfits', label: 'Can Install Upfits', desc: 'Can your dealership install upfitting equipment?' },
+                              ].map(({ key, label, desc }) => (
+                                <div key={key} className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                                  <div className="space-y-0.5 flex-1">
+                                    <Label htmlFor={key} className="text-base">{label}</Label>
+                                    <p className="text-sm text-muted-foreground">{desc}</p>
+                                  </div>
+                                  <Switch
+                                    id={key}
+                                    checked={dealerFormData[key as keyof typeof dealerFormData] as boolean || false}
+                                    onCheckedChange={(checked) =>
+                                      setDealerFormData({ ...dealerFormData, [key]: checked })
+                                    }
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <Separator />
+
+                          {/* Delivery Capabilities */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Truck className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Delivery Capabilities</Label>
+                            </div>
+                            <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                              <div className="space-y-0.5 flex-1">
+                                <Label htmlFor="delivery_available" className="text-base">Delivery Available</Label>
+                                <p className="text-sm text-muted-foreground">Do you offer vehicle delivery service?</p>
+                              </div>
+                              <Switch
+                                id="delivery_available"
+                                checked={dealerFormData.delivery_available || false}
+                                onCheckedChange={(checked) => setDealerFormData({ ...dealerFormData, delivery_available: checked })}
+                              />
+                            </div>
+                            {dealerFormData.delivery_available && (
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pl-4 border-l-2">
                     <div className="space-y-2">
                       <Label htmlFor="typical_delivery_days">Typical Delivery Days</Label>
                       <Input
@@ -1410,9 +3052,32 @@ export default function Profile() {
                         onChange={(e) => setDealerFormData({ ...dealerFormData, delivery_fee: e.target.value ? parseFloat(e.target.value) : undefined })}
                       />
                     </div>
+                              </div>
+                            )}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <Separator />
+
+                          {/* Fleet Capabilities */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Truck className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Fleet Capabilities</Label>
+                            </div>
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                                <div className="space-y-0.5 flex-1">
+                                  <Label htmlFor="accepts_fleet_inquiries" className="text-base">Accepts Fleet Inquiries</Label>
+                                  <p className="text-sm text-muted-foreground">Do you accept fleet sales inquiries?</p>
+                                </div>
+                                <Switch
+                                  id="accepts_fleet_inquiries"
+                                  checked={dealerFormData.accepts_fleet_inquiries || false}
+                                  onCheckedChange={(checked) => setDealerFormData({ ...dealerFormData, accepts_fleet_inquiries: checked })}
+                                />
+                              </div>
+                              {dealerFormData.accepts_fleet_inquiries && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-4 border-l-2">
                     <div className="space-y-2">
                       <Label htmlFor="minimum_fleet_size">Minimum Fleet Size</Label>
                       <Input
@@ -1431,19 +3096,51 @@ export default function Profile() {
                         value={dealerFormData.fleet_discount_percentage || ""}
                         onChange={(e) => setDealerFormData({ ...dealerFormData, fleet_discount_percentage: e.target.value ? parseFloat(e.target.value) : undefined })}
                       />
+                                  </div>
+                                </div>
+                              )}
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="current_promotions">Current Promotions</Label>
-                    <Textarea
-                      id="current_promotions"
-                      value={dealerFormData.current_promotions || ""}
-                      onChange={(e) => setDealerFormData({ ...dealerFormData, current_promotions: e.target.value })}
-                      rows={3}
-                    />
+                          <Separator />
+
+                          {/* Communication Preferences */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Bell className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Communication Preferences</Label>
+                            </div>
+                            <div className="space-y-3">
+                              {[
+                                { key: 'auto_respond_inquiries', label: 'Auto-Respond to Inquiries', desc: 'Automatically respond to customer inquiries?' },
+                                { key: 'inquiry_email_notification', label: 'Email Notifications', desc: 'Receive email notifications for inquiries?' },
+                                { key: 'weekly_performance_report', label: 'Weekly Performance Report', desc: 'Receive weekly performance reports?' },
+                              ].map(({ key, label, desc }) => (
+                                <div key={key} className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                                  <div className="space-y-0.5 flex-1">
+                                    <Label htmlFor={key} className="text-base">{label}</Label>
+                                    <p className="text-sm text-muted-foreground">{desc}</p>
+                                  </div>
+                                  <Switch
+                                    id={key}
+                                    checked={dealerFormData[key as keyof typeof dealerFormData] as boolean || false}
+                                    onCheckedChange={(checked) =>
+                                      setDealerFormData({ ...dealerFormData, [key]: checked })
+                                    }
+                                  />
+                                </div>
+                              ))}
+                            </div>
                   </div>
 
+                          <Separator />
+
+                          {/* Certifications & Awards */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Certifications & Awards</Label>
+                            </div>
                   <div className="space-y-2">
                     <Label>Certifications</Label>
                     <div className="flex gap-2">
@@ -1456,6 +3153,7 @@ export default function Profile() {
                             addCertification();
                           }
                         }}
+                                  placeholder="Add certification"
                       />
                       <Button type="button" onClick={addCertification} variant="outline">
                         Add
@@ -1478,7 +3176,6 @@ export default function Profile() {
                       </div>
                     )}
                   </div>
-
                   <div className="space-y-2">
                     <Label>Awards</Label>
                     <div className="flex gap-2">
@@ -1491,6 +3188,7 @@ export default function Profile() {
                             addAward();
                           }
                         }}
+                                  placeholder="Add award"
                       />
                       <Button type="button" onClick={addAward} variant="outline">
                         Add
@@ -1513,18 +3211,496 @@ export default function Profile() {
                       </div>
                     )}
                   </div>
+                    </div>
+
+                          <Separator />
+
+                          {/* Promotions */}
+                      <div className="space-y-2">
+                            <Label htmlFor="current_promotions">Current Promotions</Label>
+                            <Textarea
+                              id="current_promotions"
+                              value={dealerFormData.current_promotions || ""}
+                              onChange={(e) => setDealerFormData({ ...dealerFormData, current_promotions: e.target.value })}
+                              rows={4}
+                              placeholder="Describe any current promotions or special offers..."
+                        />
+                      </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* OEM Dealer Codes Tab */}
+                    {activeTab === "dealer-codes" && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <FileText className="h-5 w-5" />
+                            OEM Dealer Codes
+                          </CardTitle>
+                          <CardDescription>
+                            Manage dealer codes for each OEM/make you represent
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          {!isDealerOrgType && (
+                            <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 p-4 rounded-md text-sm text-yellow-900 dark:text-yellow-100">
+                              <p className="font-medium mb-1">Dealer/Seller Organization Type Required</p>
+                              <p className="text-xs">Please select "Dealer" or "Seller" as your organization type in the Organization section to manage OEM dealer codes.</p>
+                            </div>
+                          )}
+                          {!profileData?.dealer?.id && isDealerOrgType ? (
+                            <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 p-4 rounded-md text-sm text-blue-900 dark:text-blue-100">
+                              <p className="font-medium mb-1">Dealer profile required</p>
+                              <p className="text-xs">Please complete your basic dealership information in the Dealer Capabilities section first.</p>
+                            </div>
+                          ) : !makesData && isDealerOrgType ? (
+                            <div className="flex items-center justify-center py-8">
+                              <div className="text-center">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+                                <p className="text-muted-foreground">Loading makes...</p>
+                              </div>
+                            </div>
+                          ) : profileData?.dealer?.id && makesData ? (
+                            <DealerCodesManager
+                              dealerId={profileData.dealer.id}
+                              organizationId={profileData.organization?.id || 0}
+                              dealerCodes={profileData.dealerCodes || []}
+                              makes={makesData || []}
+                              makesCarried={dealerFormData.makes_carried || profileData.dealer?.makes_carried}
+                              onUpdate={refetchProfile}
+                              upsertMutation={upsertDealerCodeMutation}
+                              deleteMutation={deleteDealerCodeMutation}
+                            />
+                          ) : null}
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Locations Tab */}
+                    {activeTab === "locations" && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <MapPin className="h-5 w-5" />
+                            Dealer Locations
+                          </CardTitle>
+                          <CardDescription>
+                            Manage multiple locations for your dealership
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          {!profileData?.dealer?.id && isDealerOrgType ? (
+                            <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 p-4 rounded-md text-sm text-blue-900 dark:text-blue-100">
+                              <p className="font-medium mb-1">Dealer profile required</p>
+                              <p className="text-xs">Please complete your basic dealership information in the Dealer Capabilities section first.</p>
+                            </div>
+                          ) : profileData?.dealer?.id ? (
+                            <DealerLocationsManager
+                              ref={dealerLocationsManagerRef}
+                              dealerId={profileData.dealer.id}
+                              organizationId={profileData.organization?.id || 0}
+                              dealerLocations={profileData.dealerLocations || []}
+                              onUpdate={refetchProfile}
+                              upsertMutation={upsertDealerLocationMutation}
+                              deleteMutation={deleteDealerLocationMutation}
+                            />
+                          ) : (
+                            <div className="bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 p-4 rounded-md text-sm text-gray-900 dark:text-gray-100">
+                              <p className="font-medium mb-1">Locations feature</p>
+                              <p className="text-xs">Location management will be available for your organization type in a future update.</p>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Fleet & Government Tab */}
+                    {activeTab === "fleet-government" && showDealerSection && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <Truck className="h-5 w-5" />
+                            Fleet & Government Programs
+                          </CardTitle>
+                          <CardDescription>
+                            Configure your fleet and government program participation
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                          {!profileData?.dealer && (
+                            <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 p-3 rounded-md text-sm text-blue-900 dark:text-blue-100">
+                              <p className="font-medium mb-1">No dealer record found</p>
+                              <p className="text-xs">Your organization type requires a dealer record. Fill out the form below and save to create one.</p>
+                      </div>
+                          )}
+
+                          {/* Ordering Capabilities */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Truck className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Ordering Capabilities</Label>
+                            </div>
+                            <div className="space-y-3">
+                              {[
+                                { key: 'can_order_fleet', label: 'Can Order Fleet Vehicles', desc: 'Can you order fleet vehicles from OEMs?' },
+                                { key: 'can_order_government', label: 'Can Order Government Vehicles', desc: 'Can you order government vehicles?' },
+                                { key: 'uses_b4a', label: 'Uses B4A Program', desc: 'Do you participate in the B4A (Buy 4 America) program?' },
+                              ].map(({ key, label, desc }) => (
+                                <div key={key} className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                                  <div className="space-y-0.5 flex-1">
+                                    <Label htmlFor={key} className="text-base">{label}</Label>
+                                    <p className="text-sm text-muted-foreground">{desc}</p>
+                                  </div>
+                                  <Switch
+                                    id={key}
+                                    checked={dealerFormData[key as keyof typeof dealerFormData] as boolean || false}
+                                    onCheckedChange={(checked) =>
+                                      setDealerFormData({ ...dealerFormData, [key]: checked })
+                                    }
+                                  />
+                                </div>
+                              ))}
+                    </div>
+                  </div>
+
+                          <Separator />
+
+                          {/* B4A Program */}
+                          {dealerFormData.uses_b4a && (
+                            <>
+                              <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Store className="h-4 w-4" />
+                                  <Label className="text-base font-semibold">B4A Program Details</Label>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="b4a_account_number">B4A Account Number</Label>
+                        <Input
+                          id="b4a_account_number"
+                          value={dealerFormData.b4a_account_number || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, b4a_account_number: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="b4a_enrollment_date">B4A Enrollment Date</Label>
+                        <Input
+                          id="b4a_enrollment_date"
+                          type="date"
+                          value={dealerFormData.b4a_enrollment_date || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, b4a_enrollment_date: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                              <Separator />
+                            </>
+                          )}
+
+                  {/* Fleet & Government Programs */}
+                          <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                              <Shield className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Government Registration</Label>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="fein_number">FEIN Number</Label>
+                        <Input
+                          id="fein_number"
+                          value={dealerFormData.fein_number || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, fein_number: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="cage_code">CAGE Code</Label>
+                        <Input
+                          id="cage_code"
+                          value={dealerFormData.cage_code || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, cage_code: e.target.value })}
+                          maxLength={10}
+                        />
+                      </div>
+                    </div>
+                            <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                              <div className="space-y-0.5 flex-1">
+                                <Label htmlFor="sam_registration" className="text-base">SAM Registration</Label>
+                          <p className="text-sm text-muted-foreground">Registered in System for Award Management</p>
+                        </div>
+                        <Switch
+                          id="sam_registration"
+                          checked={dealerFormData.sam_registration || false}
+                          onCheckedChange={(checked) => setDealerFormData({ ...dealerFormData, sam_registration: checked })}
+                        />
+                      </div>
+                            {dealerFormData.sam_registration && (
+                              <div className="space-y-2 pl-4 border-l-2">
+                        <Label htmlFor="sam_expiration_date">SAM Expiration Date</Label>
+                        <Input
+                          id="sam_expiration_date"
+                          type="date"
+                          value={dealerFormData.sam_expiration_date || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, sam_expiration_date: e.target.value })}
+                        />
+                      </div>
+                            )}
+                  </div>
+
+                          <Separator />
+
+                  {/* OEM Program Certifications */}
+                          <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <Label className="text-base font-semibold">OEM Program Certifications</Label>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                                <div className="space-y-0.5 flex-1">
+                                  <Label htmlFor="ford_pro_elite" className="text-base">Ford Pro Elite</Label>
+                          <p className="text-sm text-muted-foreground">Ford Pro Elite certification</p>
+                        </div>
+                        <Switch
+                          id="ford_pro_elite"
+                          checked={dealerFormData.ford_pro_elite || false}
+                          onCheckedChange={(checked) => setDealerFormData({ ...dealerFormData, ford_pro_elite: checked })}
+                        />
+                      </div>
+                              <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                                <div className="space-y-0.5 flex-1">
+                                  <Label htmlFor="gm_fleet_certified" className="text-base">GM Fleet Certified</Label>
+                          <p className="text-sm text-muted-foreground">GM Fleet certification</p>
+                        </div>
+                        <Switch
+                          id="gm_fleet_certified"
+                          checked={dealerFormData.gm_fleet_certified || false}
+                          onCheckedChange={(checked) => setDealerFormData({ ...dealerFormData, gm_fleet_certified: checked })}
+                        />
+                      </div>
+                              <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                                <div className="space-y-0.5 flex-1">
+                                  <Label htmlFor="ram_commercial_certified" className="text-base">RAM Commercial Certified</Label>
+                          <p className="text-sm text-muted-foreground">RAM Commercial certification</p>
+                        </div>
+                        <Switch
+                          id="ram_commercial_certified"
+                          checked={dealerFormData.ram_commercial_certified || false}
+                          onCheckedChange={(checked) => setDealerFormData({ ...dealerFormData, ram_commercial_certified: checked })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                          <Separator />
+
+                          {/* Floor Plan */}
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Building className="h-4 w-4" />
+                              <Label className="text-base font-semibold">Floor Plan</Label>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <Label htmlFor="floor_plan_company">Floor Plan Company</Label>
+                                <Input
+                                  id="floor_plan_company"
+                                  value={dealerFormData.floor_plan_company || ""}
+                                  onChange={(e) => setDealerFormData({ ...dealerFormData, floor_plan_company: e.target.value })}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="floor_plan_account">Floor Plan Account</Label>
+                                <Input
+                                  id="floor_plan_account"
+                                  value={dealerFormData.floor_plan_account || ""}
+                                  onChange={(e) => setDealerFormData({ ...dealerFormData, floor_plan_account: e.target.value })}
+                                />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="space-y-2">
+                                <Label htmlFor="floor_plan_limit">Floor Plan Limit ($)</Label>
+                                <Input
+                                  id="floor_plan_limit"
+                                  type="number"
+                                  step="0.01"
+                                  value={dealerFormData.floor_plan_limit || ""}
+                                  onChange={(e) => setDealerFormData({ ...dealerFormData, floor_plan_limit: e.target.value ? parseFloat(e.target.value) : undefined })}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="typical_days_to_floor">Typical Days to Floor</Label>
+                                <Input
+                                  id="typical_days_to_floor"
+                                  type="number"
+                                  value={dealerFormData.typical_days_to_floor || ""}
+                                  onChange={(e) => setDealerFormData({ ...dealerFormData, typical_days_to_floor: e.target.value ? parseInt(e.target.value) : undefined })}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="average_turn_days">Average Turn Days</Label>
+                                <Input
+                                  id="average_turn_days"
+                                  type="number"
+                                  value={dealerFormData.average_turn_days || ""}
+                                  onChange={(e) => setDealerFormData({ ...dealerFormData, average_turn_days: e.target.value ? parseInt(e.target.value) : undefined })}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <Separator />
+
+                  {/* Upfitter Relationships */}
+                          <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Building className="h-4 w-4" />
+                      <Label className="text-base font-semibold">Upfitter Relationships</Label>
+                    </div>
+                            <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                              <div className="space-y-0.5 flex-1">
+                                <Label htmlFor="upfit_delivery_coordination" className="text-base">Upfit Delivery Coordination</Label>
+                        <p className="text-sm text-muted-foreground">Coordinate delivery with upfitters</p>
+                      </div>
+                      <Switch
+                        id="upfit_delivery_coordination"
+                        checked={dealerFormData.upfit_delivery_coordination || false}
+                        onCheckedChange={(checked) => setDealerFormData({ ...dealerFormData, upfit_delivery_coordination: checked })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="preferred_upfitter_ids">Preferred Upfitter IDs</Label>
+                      <Input
+                        id="preferred_upfitter_ids"
+                        placeholder="Enter upfitter IDs separated by commas (e.g., 1, 2, 3)"
+                        value={dealerFormData.preferred_upfitter_ids?.join(', ') || ""}
+                        onChange={(e) => {
+                          const ids = e.target.value.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+                          setDealerFormData({ ...dealerFormData, preferred_upfitter_ids: ids });
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Enter comma-separated upfitter IDs
+                      </p>
+                    </div>
+                  </div>
+
+                          <Separator />
+
+                  {/* Primary Contact */}
+                          <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <User className="h-4 w-4" />
+                      <Label className="text-base font-semibold">Primary Contact</Label>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="primary_contact_name">Contact Name</Label>
+                        <Input
+                          id="primary_contact_name"
+                          value={dealerFormData.primary_contact_name || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, primary_contact_name: e.target.value })}
+                          maxLength={100}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="primary_contact_title">Contact Title</Label>
+                        <Input
+                          id="primary_contact_title"
+                          value={dealerFormData.primary_contact_title || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, primary_contact_title: e.target.value })}
+                          maxLength={100}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="primary_contact_phone">Contact Phone</Label>
+                        <Input
+                          id="primary_contact_phone"
+                          value={dealerFormData.primary_contact_phone || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, primary_contact_phone: e.target.value })}
+                          maxLength={50}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="primary_contact_email">Contact Email</Label>
+                        <Input
+                          id="primary_contact_email"
+                          type="email"
+                          value={dealerFormData.primary_contact_email || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, primary_contact_email: e.target.value })}
+                          maxLength={255}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                          <Separator />
+
+                  {/* DMS Integration */}
+                          <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Building className="h-4 w-4" />
+                      <Label className="text-base font-semibold">DMS Integration</Label>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="dms_provider">DMS Provider</Label>
+                        <Select
+                          value={dealerFormData.dms_provider || ""}
+                          onValueChange={(value) => setDealerFormData({ ...dealerFormData, dms_provider: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select DMS Provider" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="cdk">CDK</SelectItem>
+                            <SelectItem value="reynolds">Reynolds & Reynolds</SelectItem>
+                            <SelectItem value="dealertrack">DealerTrack</SelectItem>
+                            <SelectItem value="autosoft">AutoSoft</SelectItem>
+                            <SelectItem value="other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="dms_dealer_id">DMS Dealer ID</Label>
+                        <Input
+                          id="dms_dealer_id"
+                          value={dealerFormData.dms_dealer_id || ""}
+                          onChange={(e) => setDealerFormData({ ...dealerFormData, dms_dealer_id: e.target.value })}
+                          maxLength={50}
+                        />
+                      </div>
+                    </div>
+                            <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+                              <div className="space-y-0.5 flex-1">
+                                <Label htmlFor="dms_sync_enabled" className="text-base">DMS Sync Enabled</Label>
+                                <p className="text-sm text-muted-foreground">Enable automatic synchronization with your DMS</p>
+                  </div>
+                              <Switch
+                                id="dms_sync_enabled"
+                                checked={dealerFormData.dms_sync_enabled || false}
+                                onCheckedChange={(checked) => setDealerFormData({ ...dealerFormData, dms_sync_enabled: checked })}
+                      />
+                    </div>
+                        </div>
                 </CardContent>
               </Card>
             )}
 
             {/* Notification Preferences */}
-            {personalFormData && (
+                    {activeTab === "notifications" && personalFormData && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Bell className="h-5 w-5" />
                   Notification Preferences
                 </CardTitle>
+                          <CardDescription>
+                            Manage how you receive notifications and updates
+                          </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -1537,25 +3713,7 @@ export default function Profile() {
                   <Switch
                     id="emailNotifications"
                       checked={personalFormData.emailNotifications}
-                    onCheckedChange={(checked) =>
-                        setPersonalFormData({ ...personalFormData, emailNotifications: checked })
-                    }
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="marketingEmails">Marketing Emails</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Receive updates about new features and promotions
-                    </p>
-                  </div>
-                  <Switch
-                    id="marketingEmails"
-                      checked={personalFormData.marketingEmails}
-                    onCheckedChange={(checked) =>
-                        setPersonalFormData({ ...personalFormData, marketingEmails: checked })
-                    }
+                              onCheckedChange={(checked) => setPersonalFormData({ ...personalFormData, emailNotifications: checked })}
                   />
                 </div>
               </CardContent>
@@ -1563,10 +3721,16 @@ export default function Profile() {
             )}
 
             {/* Account Information */}
-            {profileData && (
+                    {activeTab === "account" && profileData && (
             <Card>
               <CardHeader>
-                <CardTitle>Account Information</CardTitle>
+                          <CardTitle className="flex items-center gap-2">
+                            <Settings className="h-5 w-5" />
+                            Account Information
+                          </CardTitle>
+                          <CardDescription>
+                            View your account details and status
+                          </CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="flex justify-between text-sm">
@@ -1610,27 +3774,196 @@ export default function Profile() {
             </Card>
             )}
 
-            <div className="flex gap-4">
-              <Button
-                type="submit"
-                className="flex-1"
-                disabled={isSaving || profileLoading}
-              >
-                {isSaving ? "Saving..." : "Save Changes"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => window.history.back()}
-              >
-                Cancel
-              </Button>
-            </div>
+                    {/* Listing Capability Status - Show in Account tab */}
+                    {activeTab === "account" && profileData?.organization && (
+                      <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Store className="h-5 w-5" />
+                    Vehicle Listing Capability
+                  </CardTitle>
+                  <CardDescription>
+                    Status of your ability to create and manage vehicle listings
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {(() => {
+                    const orgType = orgTypesData?.find((t: OrganizationType) => t.id === profileData.organization?.organization_type_id);
+                    const canListVehicles = orgType?.can_list_vehicles || false;
+                    const hasDealer = !!profileData.dealer?.id;
+                    const hasOrg = !!profileData.organization?.id;
+                    const canCreate = canCreateListings === true;
+                    
+                    if (canCreate && hasDealer && hasOrg) {
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 text-green-600">
+                            <CheckCircle2 className="h-5 w-5" />
+                            <span className="font-medium">You can create vehicle listings!</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Your dealership account is fully set up. You can now create and manage vehicle listings.
+                          </p>
+                          <Button
+                            type="button"
+                            onClick={() => {
+                              setLocation('/dealer/listings/new');
+                            }}
+                            className="w-full sm:w-auto"
+                          >
+                            <PlusCircle className="h-4 w-4 mr-2" />
+                            Create Your First Listing
+                          </Button>
+                        </div>
+                      );
+                    } else if (hasOrg && !canListVehicles) {
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 text-amber-600">
+                            <AlertCircle className="h-5 w-5" />
+                            <span className="font-medium">Organization type does not allow listings</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Your organization type ({orgType?.display_name || 'Unknown'}) does not have permission to create vehicle listings. 
+                            Please contact support if you need to change your organization type.
+                          </p>
+                        </div>
+                      );
+                    } else if (hasOrg && canListVehicles && !hasDealer) {
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 text-amber-600">
+                            <AlertCircle className="h-5 w-5" />
+                            <span className="font-medium">Dealer profile incomplete</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Your organization type allows vehicle listings, but you need to complete your dealer profile below. 
+                            Once you save your dealer information, you'll be able to create listings.
+                          </p>
+                        </div>
+                      );
+                    } else if (hasOrg && canListVehicles && hasDealer && canCreateListings === false) {
+                      // Check what's missing - specific fields
+                      const missingFields: string[] = [];
+                      const org = profileData.organization;
+                      const dealer = profileData.dealer;
+                      
+                      // Check organization status
+                      if (org?.status !== 'active') {
+                        missingFields.push(`Organization status must be "active" (currently: "${org?.status || 'unknown'}")`);
+                      }
+                      
+                      // Check organization required fields
+                      const orgMissingFields: string[] = [];
+                      if (!org?.organization_name) orgMissingFields.push('Organization Name');
+                      if (!org?.organization_type_id) orgMissingFields.push('Organization Type');
+                      if (!org?.primary_email) orgMissingFields.push('Primary Email');
+                      if (!org?.address_line1) orgMissingFields.push('Address Line 1');
+                      if (!org?.city) orgMissingFields.push('City');
+                      
+                      if (orgMissingFields.length > 0) {
+                        missingFields.push(`Organization missing: ${orgMissingFields.join(', ')}`);
+                      }
+                      
+                      // Check dealer required fields
+                      const dealerMissingFields: string[] = [];
+                      if (!dealer?.business_type) dealerMissingFields.push('Business Type');
+                      if (!dealer?.dealer_license_number) dealerMissingFields.push('Dealer License Number');
+                      if (!profileData.dealerCodes || profileData.dealerCodes.length === 0) {
+                        dealerMissingFields.push('At least one OEM Dealer Code');
+                      }
+                      if (!profileData.dealerLocations || profileData.dealerLocations.length === 0) {
+                        dealerMissingFields.push('At least one Dealer Location');
+                      }
+                      
+                      if (dealerMissingFields.length > 0) {
+                        missingFields.push(`Dealer profile missing: ${dealerMissingFields.join(', ')}`);
+                      }
+                      
+                      // Check organization completion percentage
+                      const orgCompletion = (org as any)?.profile_completion_percentage;
+                      if (orgCompletion !== null && orgCompletion !== undefined && orgCompletion < 50) {
+                        missingFields.push(`Organization profile is only ${orgCompletion}% complete (minimum 50% required)`);
+                      }
+                      
+                      // Check dealer completion percentage
+                      const dealerCompletion = (dealer as any)?.profile_completion_percentage;
+                      if (dealerCompletion !== null && dealerCompletion !== undefined && dealerCompletion < 50) {
+                        missingFields.push(`Dealer profile is only ${dealerCompletion}% complete (minimum 50% required)`);
+                      }
+                      
+                      // Check user role
+                      const userRole = profileData.account?.role;
+                      if (userRole === 'viewer') {
+                        missingFields.push('Your role is "viewer" which cannot create listings. Contact your organization administrator to change your role.');
+                      }
+                      
+                      // If no specific issues found, show generic message
+                      if (missingFields.length === 0) {
+                        missingFields.push('Your profile may need additional verification. Please ensure all required fields are completed.');
+                      }
+                      
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 text-amber-600">
+                            <AlertCircle className="h-5 w-5" />
+                            <span className="font-medium">Listing capability pending verification</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground mb-3">
+                            Your dealer profile is set up, but your listing capability may need verification. 
+                            Please address the following:
+                          </p>
+                          <ul className="list-disc list-inside space-y-2 text-sm text-muted-foreground">
+                            {missingFields.map((field, index) => (
+                              <li key={index} className="flex items-start gap-2">
+                                <span className="text-amber-600 mt-0.5">•</span>
+                                <span>{field}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="mt-4 pt-4 border-t">
+                            <p className="text-xs text-muted-foreground">
+                              <strong>Tip:</strong> Complete your profile sections above to increase your profile completion percentage. 
+                              Required sections include Organization, Dealer Capabilities, and at least one Dealer Location.
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    } else if (!hasOrg) {
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <AlertCircle className="h-5 w-5" />
+                            <span className="font-medium">Organization required</span>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            You need to create an organization above before you can create vehicle listings.
+                          </p>
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <Clock className="h-5 w-5" />
+                            <span className="font-medium">Checking listing capability...</span>
+                          </div>
+                        </div>
+                      );
+                    }
+                  })()}
+                </CardContent>
+              </Card>
+            )}
+
           </form>
         </div>
-      </main>
-
+              </div>
+            </div>
+          </SidebarInset>
+        </div>
       <Footer />
     </div>
+    </SidebarProvider>
   );
 }

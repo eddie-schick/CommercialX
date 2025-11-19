@@ -5,69 +5,209 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
-// Import the schema type - we'll define it locally for now
-const listingSchema = z.object({
-  listingType: z.enum(["stock_unit", "build_to_order"]),
-  vin: z.string().length(17).regex(/^[A-HJ-NPR-Z0-9]{17}$/),
-  year: z.number().int().min(2000).max(new Date().getFullYear() + 1),
-  make: z.string().min(1),
-  model: z.string().min(1),
-  series: z.string().optional(),
-  bodyStyle: z.string().optional(),
-  fuelType: z.enum(["gasoline", "diesel", "electric", "hybrid", "cng", "propane"]),
-  wheelbase: z.preprocess(
-    (val) => (typeof val === 'number' && isNaN(val)) ? undefined : val,
-    z.number().positive().optional()
-  ),
-  gvwr: z.preprocess(
-    (val) => (typeof val === 'number' && isNaN(val)) ? undefined : val,
-    z.number().positive().optional()
-  ),
-  payload: z.preprocess(
-    (val) => (typeof val === 'number' && isNaN(val)) ? undefined : val,
-    z.number().positive().optional()
-  ),
-  engineDescription: z.string().optional(),
-  transmission: z.string().optional(),
-  driveType: z.enum(["RWD", "AWD", "4WD", "FWD"]).optional(),
-  hasEquipment: z.boolean(),
-  equipmentManufacturer: z.string().optional(),
-  equipmentProductLine: z.string().optional(),
-  equipmentType: z.string().optional(),
-  equipmentLength: z.number().positive().optional(),
-  equipmentWeight: z.number().positive().optional(),
-  askingPrice: z.number().positive(),
-  specialPrice: z.number().positive().optional(),
-  stockNumber: z.string().optional(),
-  condition: z.enum(["new", "used", "certified_pre_owned", "demo"]),
-  mileage: z.number().nonnegative().optional(),
-  exteriorColor: z.string().optional(),
-  interiorColor: z.string().optional(),
-  description: z.string().optional(),
-  locationCity: z.string().optional(),
-  locationState: z.string().optional(),
-  photos: z.array(z.string().url()).optional(),
-}).refine(
-  (data) => {
-    if (data.condition === "used" || data.condition === "certified_pre_owned") {
-      return data.mileage !== undefined && data.mileage !== null;
+// Helper function to clean NaN values from data before validation
+const cleanNaN = (data: any): any => {
+  if (data === null || data === undefined) {
+    return data;
+  }
+  
+  if (Array.isArray(data)) {
+    return data.map(cleanNaN);
+  }
+  
+  if (typeof data === 'object') {
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (typeof value === 'number' && isNaN(value)) {
+        cleaned[key] = undefined;
+      } else {
+        cleaned[key] = cleanNaN(value);
+      }
     }
-    return true;
-  },
-  { message: "Mileage is required for used vehicles", path: ["mileage"] }
-).refine(
-  (data) => {
-    if (data.hasEquipment) {
-      return data.equipmentManufacturer && data.equipmentManufacturer.length > 0;
+    return cleaned;
+  }
+  
+  return data;
+};
+
+// Complete listing schema with all fields used in the form
+// All fields are optional - no required validations
+const listingSchema = z
+  .preprocess(cleanNaN, z.object({
+    // Listing Type
+    listingType: z.enum(["stock_unit", "build_to_order"]).optional(),
+
+    // Vehicle Data
+    vin: z.string().optional().refine(
+      (val) => !val || val.length === 0 || (val.length === 17 && /^[A-HJ-NPR-Z0-9]{17}$/.test(val)),
+      {
+        message: "VIN must be 17 characters and cannot contain I, O, or Q",
+      }
+    ),
+    year: z
+      .number()
+      .int()
+      .min(2000)
+      .max(new Date().getFullYear() + 1)
+      .optional()
+      .nullable(),
+    make: z.string().optional(),
+    model: z.string().optional(),
+    series: z.string().optional(),
+    bodyStyle: z.string().optional(),
+    fuelType: z.enum(["gasoline", "diesel", "electric", "hybrid", "cng", "propane"]).optional(),
+    wheelbase: z.number().positive().optional(),
+    gvwr: z.number().positive().optional(),
+    payload: z.number().positive().optional(),
+    engineDescription: z.string().optional(),
+    transmission: z.string().optional(),
+    driveType: z.enum(["RWD", "AWD", "4WD", "FWD"]).optional(),
+
+    // Equipment Data (04. Equipment Data schema)
+    hasEquipment: z.boolean().optional(),
+    // Equipment table fields
+    equipmentUpfitterName: z.string().optional(), // upfitter_name (NOT NULL in schema, but optional in form)
+    equipmentProductLine: z.string().optional(), // product_line (NOT NULL in schema, but optional in form)
+    equipmentModelName: z.string().optional(), // model_name (NOT NULL in schema, but optional in form)
+    equipmentType: z.string().optional(), // equipment_type (NOT NULL in schema, but optional in form)
+    equipmentSubtype: z.string().optional(),
+    equipmentPrimaryMaterial: z.string().optional(), // primary_material (NOT NULL in schema, but optional in form)
+    equipmentBodyCategory: z.string().optional(),
+    equipmentApplicationType: z.string().optional(),
+    equipmentStartingMsrp: z.number().positive().optional(),
+    equipmentMarketingDescription: z.string().optional(),
+    // Equipment_config table fields
+    equipmentConfigName: z.string().optional(), // config_name (NOT NULL in schema, but optional in form)
+    equipmentConfigCode: z.string().optional(),
+    equipmentModelNumber: z.string().optional(),
+    equipmentLength: z.number().positive().optional(), // length_inches (NOT NULL in schema, but optional in form)
+    equipmentWidth: z.number().positive().optional(), // width_inches (NOT NULL in schema, but optional in form)
+    equipmentHeight: z.number().positive().optional(), // height_inches (NOT NULL in schema, but optional in form)
+    equipmentInteriorLength: z.number().positive().optional(),
+    equipmentInteriorWidth: z.number().positive().optional(),
+    equipmentInteriorHeight: z.number().positive().optional(),
+    equipmentUsableVolumeCubicFeet: z.number().positive().optional(),
+    equipmentWeight: z.number().positive().optional(), // equipment_weight_lbs (NOT NULL in schema, but optional in form)
+    equipmentMaximumPayload: z.number().positive().optional(),
+    equipmentMinimumCabToAxle: z.number().positive().optional(),
+    equipmentMaximumCabToAxle: z.number().positive().optional(),
+    equipmentRecommendedCabToAxle: z.number().positive().optional(),
+    equipmentMountingType: z.string().optional(),
+    equipmentRequiresSubframe: z.boolean().optional(),
+    equipmentCompatibleGvwrMin: z.number().positive().optional(),
+    equipmentCompatibleGvwrMax: z.number().positive().optional(),
+    equipmentMaterial: z.string().optional(), // material (NOT NULL in schema, but optional in form)
+    equipmentGaugeThickness: z.string().optional(),
+    equipmentCoatingFinish: z.string().optional(),
+    equipmentCorrosionProtection: z.string().optional(),
+    equipmentToolCompartmentVolume: z.number().positive().optional(),
+    equipmentDoorStyle: z.string().optional(),
+    equipmentLockingMechanism: z.string().optional(),
+    equipmentDoorConfiguration: z.string().optional(),
+    equipmentCompartmentCount: z.number().int().positive().optional(),
+    equipmentDrawerCount: z.number().int().positive().optional(),
+    equipmentShelfCount: z.number().int().positive().optional(),
+    equipmentHasInteriorLighting: z.boolean().optional(),
+    equipmentHasExteriorLighting: z.boolean().optional(),
+    equipmentHasPowerOutlets: z.boolean().optional(),
+    equipmentElectricalSystemVoltage: z.number().int().positive().optional(),
+    equipmentHasCraneProvisions: z.boolean().optional(),
+    equipmentCraneMountingLocation: z.string().optional(),
+    equipmentMaxCraneCapacity: z.number().positive().optional(),
+    equipmentHasLadderRackProvisions: z.boolean().optional(),
+    equipmentLadderRackType: z.string().optional(),
+    equipmentHasStakePockets: z.boolean().optional(),
+    equipmentHasTieDowns: z.boolean().optional(),
+    equipmentTieDownCount: z.number().int().positive().optional(),
+    equipmentFrontAxleWeightDistribution: z.number().positive().optional(),
+    equipmentRearAxleWeightDistribution: z.number().positive().optional(),
+    equipmentCenterOfGravityFromRearAxle: z.number().positive().optional(),
+    equipmentBaseMsrp: z.number().positive().optional(),
+    equipmentDealerCost: z.number().positive().optional(),
+    equipmentInstallationLaborHours: z.number().positive().optional(),
+    equipmentEstimatedInstallationCost: z.number().positive().optional(),
+    equipmentLeadTimeDays: z.number().int().positive().optional(),
+    equipmentMinimumOrderQuantity: z.number().int().positive().optional(),
+    equipmentMeetsFmvss: z.boolean().optional(),
+    equipmentFmvssComplianceNotes: z.string().optional(),
+    equipmentDotApproved: z.boolean().optional(),
+    equipmentNotes: z.string().optional(),
+    // Legacy field names for backward compatibility (will map to new fields in onSubmit)
+    equipmentManufacturer: z.string().optional(), // Maps to equipmentUpfitterName
+    doorConfiguration: z.string().optional(), // Maps to equipmentDoorConfiguration
+    compartmentCount: z.number().int().positive().optional(), // Maps to equipmentCompartmentCount
+    hasInteriorLighting: z.boolean().optional(), // Maps to equipmentHasInteriorLighting
+    hasExteriorLighting: z.boolean().optional(), // Maps to equipmentHasExteriorLighting
+
+    // Dealer Listing Data
+    askingPrice: z.number().positive().optional().nullable(),
+    specialPrice: z.number().positive().optional(),
+    stockNumber: z.string().optional(),
+    condition: z.enum(["new", "used", "certified_pre_owned", "demo"]).optional(),
+    mileage: z.number().nonnegative().optional(),
+    exteriorColor: z.string().optional(),
+    interiorColor: z.string().optional(),
+    description: z.string().optional(),
+    locationCity: z.string().optional(),
+    locationState: z.string().optional(),
+    photos: z.array(z.string().url()).optional(),
+    
+    // Additional listing fields
+    priceType: z.enum(["negotiable", "fixed", "call_for_price"]).optional(),
+    paintCondition: z.enum(["excellent", "good", "fair", "poor"]).optional(),
+    interiorCondition: z.enum(["excellent", "good", "fair", "poor"]).optional(),
+    listingTitle: z.string().optional(),
+    keyHighlights: z.string().optional(),
+    marketingHeadline: z.string().optional(),
+    isFeatured: z.boolean().optional(),
+    isHotDeal: z.boolean().optional(),
+
+    // Additional vehicle fields from VIN decode (optional)
+    heightType: z.string().optional(),
+    axleDescription: z.string().optional(),
+    rearWheels: z.enum(["SRW", "DRW"]).optional(),
+    batteryVoltage: z.number().positive().optional(),
+    torqueFtLbs: z.number().positive().optional(),
+    horsepower: z.number().positive().optional(),
+    mpgCity: z.number().positive().optional(),
+    mpgHighway: z.number().positive().optional(),
+    mpge: z.number().positive().optional(),
+    lengthInches: z.number().positive().optional(),
+    widthInches: z.number().positive().optional(),
+    heightInches: z.number().positive().optional(),
+    baseCurbWeightLbs: z.number().positive().optional(),
+    seatingCapacity: z.number().int().positive().optional(),
+    gawrFront: z.number().positive().optional(),
+    gawrRear: z.number().positive().optional(),
+    towingCapacity: z.number().positive().optional(),
+    fuelTankCapacity: z.number().positive().optional(),
+    backupCamera: z.boolean().optional(),
+    bluetoothCapable: z.boolean().optional(),
+    tpms: z.boolean().optional(),
+  })
+  .refine(
+    (data) => {
+      // Special price must be less than asking price (only if both are provided)
+      if (
+        data.specialPrice !== undefined && 
+        data.specialPrice !== null &&
+        data.askingPrice !== undefined && 
+        data.askingPrice !== null
+      ) {
+        return data.specialPrice < data.askingPrice;
+      }
+      return true;
+    },
+    {
+      message: "Special price must be less than asking price",
+      path: ["specialPrice"],
     }
-    return true;
-  },
-  { message: "Equipment manufacturer is required when equipment is installed", path: ["equipmentManufacturer"] }
-);
+  ));
 
 type ListingFormData = z.infer<typeof listingSchema>;
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -81,7 +221,6 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import { VINInput } from "@/components/ui/VINInput";
-import { SmartCombobox } from "@/components/ui/SmartCombobox";
 import { ImageUploadZone } from "@/components/ui/ImageUploadZone";
 import { VehicleDataPreview } from "@/components/listings/VehicleDataPreview";
 import { trpc } from "@/lib/trpc";
@@ -101,11 +240,9 @@ const STEPS = [
   { id: 5, title: "Review & Submit" },
 ];
 
-interface CreateListingFormProps {
-  isOnboarding?: boolean;
-}
+interface CreateListingFormProps {}
 
-export function CreateListingForm({ isOnboarding = false }: CreateListingFormProps) {
+export function CreateListingForm({}: CreateListingFormProps) {
   const [currentStep, setCurrentStep] = React.useState(0);
   // Use ref to track step and prevent reset during VIN decode
   const currentStepRef = React.useRef(0);
@@ -114,8 +251,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
   }, [currentStep]);
   
   const [, setLocation] = useLocation();
-  const { user, profile, permissions, dealerId, loading: userLoading, refetch: refetchUser } = useCurrentUser();
-  const [equipmentOptions, setEquipmentOptions] = React.useState<Array<{ value: string; label: string }>>([]);
+  const { user, profile, loading: userLoading } = useCurrentUser();
   // Track which fields were populated from VIN decode
   const [decodedFields, setDecodedFields] = React.useState<Set<string>>(new Set());
   // Store enriched data for preview
@@ -129,17 +265,25 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
   const form = useForm<ListingFormData>({
     resolver: zodResolver(listingSchema),
     defaultValues: {
-      listingType: "stock_unit",
-      vin: "",
-      year: new Date().getFullYear(),
-      make: "",
-      model: "",
-      fuelType: "gasoline",
-      hasEquipment: false,
-      condition: "new",
+      listingType: "stock_unit", // Default to stock_unit, build_to_order is disabled
+      vin: undefined,
+      year: undefined,
+      make: undefined,
+      model: undefined,
+      fuelType: undefined,
+      hasEquipment: undefined,
+      condition: undefined,
       photos: [],
     },
   });
+  
+  // Ensure build_to_order cannot be set - force to stock_unit if attempted
+  const listingTypeValue = form.watch("listingType");
+  React.useEffect(() => {
+    if (listingTypeValue === "build_to_order") {
+      form.setValue("listingType", "stock_unit");
+    }
+  }, [listingTypeValue, form]);
 
   const hasEquipment = form.watch("hasEquipment");
   const condition = form.watch("condition");
@@ -156,17 +300,8 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
 
   const createListing = trpc.dealer.listings.create.useMutation({
     onSuccess: async (data) => {
-      if (isOnboarding) {
-        toast.success("🎉 Your first vehicle has been added! Welcome to CommercialX!");
-        // During onboarding, skip refetch to avoid refresh - just redirect
-        // The profile will be loaded fresh on the dashboard page
-        setTimeout(() => {
-          window.location.href = "/dealer?onboarding_complete=true";
-        }, 1000);
-      } else {
-        toast.success("Listing created successfully!");
-        setLocation(`/dealer/listings/${data.listingId}?success=true`);
-      }
+      toast.success("Listing created successfully!");
+      setLocation(`/dealer/listings/${data.listingId}?success=true`);
     },
     onError: (error) => {
       toast.error(error.message || "Failed to create listing");
@@ -217,8 +352,11 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
       fieldsToMark.push("bodyStyle");
     }
     if (decodedData.fuelTypePrimary) {
-      form.setValue("fuelType", decodedData.fuelTypePrimary as any, setValueOptions);
-      fieldsToMark.push("fuelType");
+      const fuelType = decodedData.fuelTypePrimary as "gasoline" | "diesel" | "electric" | "hybrid" | "cng" | "propane";
+      if (["gasoline", "diesel", "electric", "hybrid", "cng", "propane"].includes(fuelType)) {
+        form.setValue("fuelType", fuelType, setValueOptions);
+        fieldsToMark.push("fuelType");
+      }
     }
     if (decodedData.wheelbase !== undefined && decodedData.wheelbase !== null) {
       form.setValue("wheelbase", decodedData.wheelbase, setValueOptions);
@@ -285,91 +423,94 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
     if (decodedData.overallHeight) {
       const heightType = decodedData.overallHeight < 80 ? 'Low Roof' : 
                         decodedData.overallHeight < 90 ? 'Medium Roof' : 'High Roof';
-      form.setValue("heightType" as any, heightType, setValueOptions);
+      form.setValue("heightType", heightType, setValueOptions);
       fieldsToMark.push("heightType");
     }
     if (decodedData.axleDescription) {
-      form.setValue("axleDescription" as any, decodedData.axleDescription, setValueOptions);
+      form.setValue("axleDescription", decodedData.axleDescription, setValueOptions);
       fieldsToMark.push("axleDescription");
     }
     if (decodedData.rearWheels) {
-      form.setValue("rearWheels" as any, decodedData.rearWheels, setValueOptions);
-      fieldsToMark.push("rearWheels");
+      const rearWheels = decodedData.rearWheels as "SRW" | "DRW";
+      if (rearWheels === "SRW" || rearWheels === "DRW") {
+        form.setValue("rearWheels", rearWheels, setValueOptions);
+        fieldsToMark.push("rearWheels");
+      }
     }
     if (decodedData.batteryVoltage !== undefined && decodedData.batteryVoltage !== null) {
-      form.setValue("batteryVoltage" as any, decodedData.batteryVoltage, setValueOptions);
+      form.setValue("batteryVoltage", decodedData.batteryVoltage, setValueOptions);
       fieldsToMark.push("batteryVoltage");
     }
     if (decodedData.horsepower !== undefined && decodedData.horsepower !== null) {
-      form.setValue("horsepower" as any, decodedData.horsepower, setValueOptions);
+      form.setValue("horsepower", decodedData.horsepower, setValueOptions);
       fieldsToMark.push("horsepower");
     }
     if (decodedData.mpgCity !== undefined && decodedData.mpgCity !== null) {
-      form.setValue("mpgCity" as any, decodedData.mpgCity, setValueOptions);
+      form.setValue("mpgCity", decodedData.mpgCity, setValueOptions);
       fieldsToMark.push("mpgCity");
     }
     if (decodedData.mpgHighway !== undefined && decodedData.mpgHighway !== null) {
-      form.setValue("mpgHighway" as any, decodedData.mpgHighway, setValueOptions);
+      form.setValue("mpgHighway", decodedData.mpgHighway, setValueOptions);
       fieldsToMark.push("mpgHighway");
     }
     if (decodedData.mpge !== undefined && decodedData.mpge !== null) {
-      form.setValue("mpge" as any, decodedData.mpge, setValueOptions);
+      form.setValue("mpge", decodedData.mpge, setValueOptions);
       fieldsToMark.push("mpge");
     }
     if (decodedData.overallLength !== undefined && decodedData.overallLength !== null) {
-      form.setValue("lengthInches" as any, decodedData.overallLength, setValueOptions);
+      form.setValue("lengthInches", decodedData.overallLength, setValueOptions);
       fieldsToMark.push("lengthInches");
     }
     if (decodedData.overallWidth !== undefined && decodedData.overallWidth !== null) {
-      form.setValue("widthInches" as any, decodedData.overallWidth, setValueOptions);
+      form.setValue("widthInches", decodedData.overallWidth, setValueOptions);
       fieldsToMark.push("widthInches");
     }
     if (decodedData.overallHeight !== undefined && decodedData.overallHeight !== null) {
-      form.setValue("heightInches" as any, decodedData.overallHeight, setValueOptions);
+      form.setValue("heightInches", decodedData.overallHeight, setValueOptions);
       fieldsToMark.push("heightInches");
     }
     if (decodedData.curbWeight !== undefined && decodedData.curbWeight !== null) {
-      form.setValue("baseCurbWeightLbs" as any, decodedData.curbWeight, setValueOptions);
+      form.setValue("baseCurbWeightLbs", decodedData.curbWeight, setValueOptions);
       fieldsToMark.push("baseCurbWeightLbs");
     }
     if (decodedData.seatingCapacity !== undefined && decodedData.seatingCapacity !== null) {
-      form.setValue("seatingCapacity" as any, decodedData.seatingCapacity, setValueOptions);
+      form.setValue("seatingCapacity", decodedData.seatingCapacity, setValueOptions);
       fieldsToMark.push("seatingCapacity");
     }
     
     // GAWR fields (CRITICAL for commercial vehicles)
     if (decodedData.gawrFront !== undefined && decodedData.gawrFront !== null) {
-      form.setValue("gawrFront" as any, decodedData.gawrFront, setValueOptions);
+      form.setValue("gawrFront", decodedData.gawrFront, setValueOptions);
       fieldsToMark.push("gawrFront");
     }
     if (decodedData.gawrRear !== undefined && decodedData.gawrRear !== null) {
-      form.setValue("gawrRear" as any, decodedData.gawrRear, setValueOptions);
+      form.setValue("gawrRear", decodedData.gawrRear, setValueOptions);
       fieldsToMark.push("gawrRear");
     }
     
     // Towing capacity
     if (decodedData.towingCapacity !== undefined && decodedData.towingCapacity !== null) {
-      form.setValue("towingCapacity" as any, decodedData.towingCapacity, setValueOptions);
+      form.setValue("towingCapacity", decodedData.towingCapacity, setValueOptions);
       fieldsToMark.push("towingCapacity");
     }
     
     // Fuel tank capacity
     if (decodedData.fuelTankCapacity !== undefined && decodedData.fuelTankCapacity !== null) {
-      form.setValue("fuelTankCapacity" as any, decodedData.fuelTankCapacity, setValueOptions);
+      form.setValue("fuelTankCapacity", decodedData.fuelTankCapacity, setValueOptions);
       fieldsToMark.push("fuelTankCapacity");
     }
     
     // Technology & Safety features
     if (decodedData.backupCamera !== undefined) {
-      form.setValue("backupCamera" as any, decodedData.backupCamera, setValueOptions);
+      form.setValue("backupCamera", decodedData.backupCamera, setValueOptions);
       fieldsToMark.push("backupCamera");
     }
     if (decodedData.bluetoothCapable !== undefined) {
-      form.setValue("bluetoothCapable" as any, decodedData.bluetoothCapable, setValueOptions);
+      form.setValue("bluetoothCapable", decodedData.bluetoothCapable, setValueOptions);
       fieldsToMark.push("bluetoothCapable");
     }
     if (decodedData.tpms !== undefined) {
-      form.setValue("tpms" as any, decodedData.tpms, setValueOptions);
+      form.setValue("tpms", decodedData.tpms, setValueOptions);
       fieldsToMark.push("tpms");
     }
     
@@ -386,6 +527,32 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
     }, 0);
   };
 
+  // Helper function to clean NaN values from numeric fields
+  const cleanNaNValues = (obj: any): any => {
+    if (obj === null || obj === undefined) {
+      return obj;
+    }
+    
+    if (Array.isArray(obj)) {
+      return obj.map(cleanNaNValues);
+    }
+    
+    if (typeof obj === 'object') {
+      const cleaned: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        // Convert NaN to undefined for all numeric fields
+        if (typeof value === 'number' && isNaN(value)) {
+          cleaned[key] = undefined;
+        } else {
+          cleaned[key] = cleanNaNValues(value);
+        }
+      }
+      return cleaned;
+    }
+    
+    return obj;
+  };
+
   const onSubmit = (data: ListingFormData) => {
     // Prevent submission if we're not on the final step
     // This prevents accidental form submission when Enter is pressed in input fields
@@ -395,25 +562,39 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
     
     // Clean up NaN values and validate driveType before submission
     const validDriveTypes = ['RWD', 'AWD', '4WD', 'FWD'] as const;
+    
+    // Map legacy equipment fields to new field names
+    const equipmentData = data.hasEquipment ? {
+      // Map legacy fields to new fields
+      equipmentUpfitterName: (data as any).equipmentUpfitterName || (data as any).equipmentManufacturer,
+      equipmentDoorConfiguration: (data as any).equipmentDoorConfiguration || (data as any).doorConfiguration,
+      equipmentCompartmentCount: (data as any).equipmentCompartmentCount || (data as any).compartmentCount,
+      equipmentHasInteriorLighting: (data as any).equipmentHasInteriorLighting ?? (data as any).hasInteriorLighting,
+      equipmentHasExteriorLighting: (data as any).equipmentHasExteriorLighting ?? (data as any).hasExteriorLighting,
+    } : {};
+    
+    // First clean all NaN values from the data
+    const dataWithoutNaN = cleanNaNValues(data);
+    
     const cleanedData = {
-      ...data,
-      wheelbase: data.wheelbase && !isNaN(data.wheelbase) ? data.wheelbase : undefined,
-      gvwr: data.gvwr && !isNaN(data.gvwr) ? data.gvwr : undefined,
-      payload: data.payload && !isNaN(data.payload) ? data.payload : undefined,
+      ...dataWithoutNaN,
       // Ensure driveType is valid or undefined
-      driveType: data.driveType && validDriveTypes.includes(data.driveType as any) 
-        ? data.driveType 
+      driveType: dataWithoutNaN.driveType && validDriveTypes.includes(dataWithoutNaN.driveType) 
+        ? dataWithoutNaN.driveType 
         : undefined,
+      // Merge equipment data
+      ...equipmentData,
     };
     
     console.log('[CreateListingForm] Submitting data:', cleanedData);
-    createListing.mutate(cleanedData);
+    // Type assertion needed since backend now accepts optional fields
+    createListing.mutate(cleanedData as any);
   };
   
   const onError = (errors: any) => {
     console.error('[CreateListingForm] Validation errors:', errors);
     // Show first error to user
-    const firstError = Object.values(errors)[0] as any;
+    const firstError = Object.values(errors)[0] as { message?: string } | undefined;
     if (firstError?.message) {
       toast.error(`Please fix: ${firstError.message}`);
     } else {
@@ -430,12 +611,8 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
   };
 
   const nextStep = () => {
-    const fieldsToValidate = getFieldsForStep(currentStep);
-    form.trigger(fieldsToValidate as any).then((isValid) => {
-      if (isValid) {
-        setCurrentStep((prev) => Math.min(prev + 1, STEPS.length - 1));
-      }
-    });
+    // No validation required - allow navigation to next step
+    setCurrentStep((prev) => Math.min(prev + 1, STEPS.length - 1));
   };
 
   const prevStep = () => {
@@ -443,35 +620,13 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
   };
 
   const getFieldsForStep = (step: number): (keyof ListingFormData)[] => {
-    switch (step) {
-      case 0:
-        return ["listingType"];
-      case 1:
-        return ["vin", "year", "make", "model", "fuelType"];
-      case 2:
-        return hasEquipment ? ["equipmentManufacturer"] : [];
-      case 3:
-        return ["askingPrice", "condition", ...(condition === "used" || condition === "certified_pre_owned" ? ["mileage"] : [])];
-      default:
-        return [];
-    }
+    // No fields are required - return empty array for all steps
+    return [];
   };
 
   const progressPercentage = ((currentStep + 1) / STEPS.length) * 100;
-  
-  // Track loading timeout for non-onboarding flows
-  const [loadingTimeout, setLoadingTimeout] = React.useState(false);
-  
-  React.useEffect(() => {
-    if (!isOnboarding && userLoading) {
-      const timeout = setTimeout(() => {
-        setLoadingTimeout(true);
-      }, 3000); // 3 second timeout
-      return () => clearTimeout(timeout);
-    }
-  }, [isOnboarding, userLoading]);
 
-  // Check if user is authenticated - this is the critical check
+  // Check if user is authenticated
   if (!user) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -495,79 +650,15 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
     );
   }
 
-  // During onboarding, proceed immediately if we have the authenticated user
-  // Don't wait for profile to load - we know they just created their organization
-  // Only show loading if we don't have the auth user yet
-  // For non-onboarding flows, give profile a reasonable time to load
-  // But don't block forever - if it takes too long, proceed anyway
-  if (!isOnboarding && userLoading && !loadingTimeout) {
+  // Show loading while profile is loading
+  if (userLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="flex flex-col items-center gap-2">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <div className="text-lg">Loading user profile...</div>
+          <div className="text-lg">Loading...</div>
         </div>
       </div>
-    );
-  }
-
-  // Check if user can create listings
-  // During onboarding, skip this check since profile might still be loading
-  // We know they just created their organization, so they should have permissions
-  // For non-onboarding, only check if we have profile data - if profile is still loading, proceed anyway
-  // The backend will verify permissions
-  if (!isOnboarding && profile && !permissions?.canCreateListings) {
-    return (
-      <Card className="max-w-2xl mx-auto">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-destructive">
-            <AlertCircle className="w-5 h-5" />
-            Insufficient Permissions
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground mb-4">
-            You do not have permission to create vehicle listings. 
-            Please contact your organization administrator.
-          </p>
-          {profile && (
-            <div className="text-sm text-muted-foreground">
-              <p>Current role: <strong>{profile.role}</strong></p>
-              <p>Organization: <strong>{profile.organization_name}</strong></p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Check if dealer ID exists
-  // During onboarding, we'll try to get dealerId from the backend when creating the listing
-  // The backend can fetch it if needed
-  // For non-onboarding, only check if we have profile data - if profile is still loading, proceed anyway
-  // The backend will verify dealer association
-  if (!isOnboarding && profile && !dealerId) {
-    return (
-      <Card className="max-w-2xl mx-auto">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-destructive">
-            <AlertCircle className="w-5 h-5" />
-            Dealer Profile Required
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">
-            You need to be associated with a dealer organization to create listings.
-            {profile && (
-              <>
-                <br />
-                <br />
-                Your organization type is: <strong>{profile.organization_type}</strong>
-              </>
-            )}
-          </p>
-        </CardContent>
-      </Card>
     );
   }
 
@@ -584,6 +675,9 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
       }} 
       className="space-y-8"
     >
+      {/* Profile check is handled by ProtectedRoute */}
+
+
       {/* Enhanced Progress Steps */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -616,13 +710,9 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                 <button
                   type="button"
                   onClick={() => {
+                    // No validation required - allow navigation to any step
                     if (index <= currentStep) {
-                      const fieldsToValidate = getFieldsForStep(index);
-                      form.trigger(fieldsToValidate as any).then((isValid) => {
-                        if (isValid || index < currentStep) {
-                          setCurrentStep(index);
-                        }
-                      });
+                      setCurrentStep(index);
                     }
                   }}
                   disabled={index > currentStep}
@@ -692,7 +782,12 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
               </div>
               <RadioGroup
                 value={listingType}
-                onValueChange={(value) => form.setValue("listingType", value as any)}
+                onValueChange={(value) => {
+                  // Only allow stock_unit for now
+                  if (value === "stock_unit") {
+                    form.setValue("listingType", value as "stock_unit" | "build_to_order");
+                  }
+                }}
                 className="grid gap-4 md:grid-cols-2"
               >
                 <label
@@ -717,21 +812,18 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                 </label>
                 <label
                   htmlFor="build_to_order"
-                  className={`
-                    relative flex items-start space-x-3 rounded-lg border-2 p-4 cursor-pointer transition-all
-                    ${listingType === "build_to_order" 
-                      ? "border-primary bg-primary/5 shadow-md ring-2 ring-primary/20" 
-                      : "border-border hover:border-primary/50 hover:bg-accent/50"
-                    }
-                  `}
+                  className="relative flex items-start space-x-3 rounded-lg border-2 p-4 cursor-not-allowed opacity-50 bg-muted/50"
                 >
-                  <RadioGroupItem value="build_to_order" id="build_to_order" className="mt-1" />
+                  <RadioGroupItem value="build_to_order" id="build_to_order" className="mt-1" disabled />
                   <div className="flex-1">
-                    <div className="font-semibold cursor-pointer block mb-1">
+                    <div className="font-semibold block mb-1 text-muted-foreground">
                       Build-to-Order
                     </div>
                     <p className="text-sm text-muted-foreground">
                       I can order this configuration from the manufacturer
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1 italic">
+                      Coming soon
                     </p>
                   </div>
                 </label>
@@ -759,12 +851,12 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                   </TooltipProvider>
                 </div>
                 <VINInput
-                  value={form.watch("vin")}
+                  value={form.watch("vin") || ""}
                   onChange={(value) => form.setValue("vin", value)}
                   onDecode={handleVINDecode}
                   label=""
                   error={form.formState.errors.vin?.message}
-                  waitForValidation={userLoading || (!user && !isOnboarding)}
+                  waitForValidation={userLoading || !user}
                   disabled={userLoading}
                 />
                 {form.formState.errors.vin && (
@@ -921,7 +1013,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                   <Label htmlFor="fuelType">Fuel Type</Label>
                   <Select
                     value={form.watch("fuelType")}
-                    onValueChange={(value) => form.setValue("fuelType", value as any)}
+                    onValueChange={(value) => form.setValue("fuelType", value as "gasoline" | "diesel" | "electric" | "hybrid" | "cng" | "propane")}
                     disabled={decodedFields.has("fuelType")}
                   >
                     <SelectTrigger className={decodedFields.has("fuelType") ? "bg-muted cursor-not-allowed" : ""}>
@@ -985,7 +1077,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                     type="number"
                     readOnly={decodedFields.has("gawrFront")}
                     className={decodedFields.has("gawrFront") ? "bg-muted cursor-not-allowed" : ""}
-                    {...form.register("gawrFront" as any, { valueAsNumber: true })}
+                    {...form.register("gawrFront", { valueAsNumber: true })}
                     placeholder="7,260"
                   />
                 </div>
@@ -996,7 +1088,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                     type="number"
                     readOnly={decodedFields.has("gawrRear")}
                     className={decodedFields.has("gawrRear") ? "bg-muted cursor-not-allowed" : ""}
-                    {...form.register("gawrRear" as any, { valueAsNumber: true })}
+                    {...form.register("gawrRear", { valueAsNumber: true })}
                     placeholder="13,110"
                   />
                 </div>
@@ -1009,7 +1101,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                     type="number"
                     readOnly={decodedFields.has("towingCapacity")}
                     className={decodedFields.has("towingCapacity") ? "bg-muted cursor-not-allowed" : ""}
-                    {...form.register("towingCapacity" as any, { valueAsNumber: true })}
+                    {...form.register("towingCapacity", { valueAsNumber: true })}
                     placeholder="21,000"
                   />
                 </div>
@@ -1022,7 +1114,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                     type="number"
                     readOnly={decodedFields.has("fuelTankCapacity")}
                     className={decodedFields.has("fuelTankCapacity") ? "bg-muted cursor-not-allowed" : ""}
-                    {...form.register("fuelTankCapacity" as any, { valueAsNumber: true })}
+                    {...form.register("fuelTankCapacity", { valueAsNumber: true })}
                     placeholder="40"
                   />
                 </div>
@@ -1034,8 +1126,8 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                     <div className="flex items-center space-x-2">
                       <Checkbox
                         id="backupCamera"
-                        checked={form.watch("backupCamera" as any) || false}
-                        onCheckedChange={(checked) => form.setValue("backupCamera" as any, checked === true)}
+                        checked={form.watch("backupCamera") || false}
+                        onCheckedChange={(checked) => form.setValue("backupCamera", checked === true)}
                         disabled={decodedFields.has("backupCamera")}
                       />
                       <Label htmlFor="backupCamera" className="font-normal cursor-pointer">
@@ -1045,8 +1137,8 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                     <div className="flex items-center space-x-2">
                       <Checkbox
                         id="bluetoothCapable"
-                        checked={form.watch("bluetoothCapable" as any) || false}
-                        onCheckedChange={(checked) => form.setValue("bluetoothCapable" as any, checked === true)}
+                        checked={form.watch("bluetoothCapable") || false}
+                        onCheckedChange={(checked) => form.setValue("bluetoothCapable", checked === true)}
                         disabled={decodedFields.has("bluetoothCapable")}
                       />
                       <Label htmlFor="bluetoothCapable" className="font-normal cursor-pointer">
@@ -1056,8 +1148,8 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                     <div className="flex items-center space-x-2">
                       <Checkbox
                         id="tpms"
-                        checked={form.watch("tpms" as any) || false}
-                        onCheckedChange={(checked) => form.setValue("tpms" as any, checked === true)}
+                        checked={form.watch("tpms") || false}
+                        onCheckedChange={(checked) => form.setValue("tpms", checked === true)}
                         disabled={decodedFields.has("tpms")}
                       />
                       <Label htmlFor="tpms" className="font-normal cursor-pointer">
@@ -1097,7 +1189,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                     onValueChange={(value) => {
                       // Only set valid enum values
                       if (value && ['RWD', 'AWD', '4WD', 'FWD'].includes(value)) {
-                        form.setValue("driveType", value as any);
+                        form.setValue("driveType", value as "RWD" | "AWD" | "4WD" | "FWD");
                       } else {
                         form.setValue("driveType", undefined);
                       }
@@ -1125,12 +1217,21 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
           )}
 
           {currentStep === 2 && (
-            <div className="space-y-4">
+            <div className="space-y-6">
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="hasEquipment"
                   checked={hasEquipment}
-                  onCheckedChange={(checked) => form.setValue("hasEquipment", checked === true)}
+                  onCheckedChange={(checked) => {
+                    form.setValue("hasEquipment", checked === true);
+                    // Also set legacy field for backward compatibility
+                    if (checked) {
+                      const manufacturer = form.watch("equipmentManufacturer");
+                      if (manufacturer && !form.watch("equipmentUpfitterName")) {
+                        form.setValue("equipmentUpfitterName", manufacturer);
+                      }
+                    }
+                  }}
                 />
                 <Label htmlFor="hasEquipment" className="font-normal cursor-pointer">
                   This unit has upfitter equipment installed
@@ -1138,145 +1239,569 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
               </div>
 
               {hasEquipment && (
-                <>
-                  <SmartCombobox
-                    value={form.watch("equipmentManufacturer")}
-                    onChange={(value) => form.setValue("equipmentManufacturer", value)}
-                    options={equipmentOptions}
-                    allowCreate={true}
-                    placeholder="e.g., Knapheide, Reading, Morgan"
-                    label="Equipment Manufacturer"
-                    error={form.formState.errors.equipmentManufacturer?.message}
-                  />
-                  <SmartCombobox
-                    value={form.watch("equipmentProductLine")}
-                    onChange={(value) => form.setValue("equipmentProductLine", value)}
-                    options={equipmentOptions}
-                    allowCreate={true}
-                    placeholder="e.g., KUV, KMT, Classic II"
-                    label="Product Line"
-                  />
-                  <div>
-                    <Label htmlFor="equipmentType">Equipment Type</Label>
-                    <Select
-                      value={form.watch("equipmentType") || ""}
-                      onValueChange={(value) => form.setValue("equipmentType", value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select equipment type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="service_body">Service Body</SelectItem>
-                        <SelectItem value="dump_body">Dump Body</SelectItem>
-                        <SelectItem value="flatbed">Flatbed</SelectItem>
-                        <SelectItem value="stake_body">Stake Body</SelectItem>
-                        <SelectItem value="van_body">Van Body</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-6">
+                  {/* Basic Equipment Information */}
+                  <div className="space-y-4 border-b pb-4">
+                    <h3 className="text-lg font-semibold">Basic Equipment Information</h3>
                     <div>
-                      <Label htmlFor="equipmentLength">Length (inches)</Label>
+                      <Label htmlFor="equipmentUpfitterName">Upfitter Name</Label>
                       <Input
-                        id="equipmentLength"
-                        type="number"
-                        {...form.register("equipmentLength", { valueAsNumber: true })}
+                        id="equipmentUpfitterName"
+                        placeholder="e.g., Knapheide, Reading, Morgan"
+                        value={form.watch("equipmentUpfitterName") || form.watch("equipmentManufacturer") || ""}
+                        onChange={(e) => {
+                          form.setValue("equipmentUpfitterName", e.target.value);
+                          form.setValue("equipmentManufacturer", e.target.value); // Legacy compatibility
+                        }}
                       />
-                      {form.formState.errors.equipmentLength && (
-                        <p className="text-sm text-destructive mt-1">{form.formState.errors.equipmentLength.message}</p>
-                      )}
                     </div>
                     <div>
-                      <Label htmlFor="equipmentWidth">Width (inches)</Label>
+                      <Label htmlFor="equipmentProductLine">Product Line</Label>
                       <Input
-                        id="equipmentWidth"
-                        type="number"
-                        {...form.register("equipmentWidth", { valueAsNumber: true })}
+                        id="equipmentProductLine"
+                        placeholder="e.g., KUV, KMT, Classic II"
+                        {...form.register("equipmentProductLine")}
                       />
-                      {form.formState.errors.equipmentWidth && (
-                        <p className="text-sm text-destructive mt-1">{form.formState.errors.equipmentWidth.message}</p>
-                      )}
                     </div>
                     <div>
-                      <Label htmlFor="equipmentHeight">Height (inches)</Label>
+                      <Label htmlFor="equipmentModelName">Model Name</Label>
                       <Input
-                        id="equipmentHeight"
-                        type="number"
-                        {...form.register("equipmentHeight", { valueAsNumber: true })}
+                        id="equipmentModelName"
+                        placeholder="e.g., KUV-84"
+                        {...form.register("equipmentModelName")}
                       />
-                      {form.formState.errors.equipmentHeight && (
-                        <p className="text-sm text-destructive mt-1">{form.formState.errors.equipmentHeight.message}</p>
-                      )}
                     </div>
                     <div>
-                      <Label htmlFor="equipmentWeight">Weight (lbs)</Label>
+                      <Label htmlFor="equipmentType">Equipment Type</Label>
+                      <Select
+                        value={form.watch("equipmentType") || ""}
+                        onValueChange={(value) => form.setValue("equipmentType", value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select equipment type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="service_body">Service Body</SelectItem>
+                          <SelectItem value="dump_body">Dump Body</SelectItem>
+                          <SelectItem value="flatbed">Flatbed</SelectItem>
+                          <SelectItem value="stake_body">Stake Body</SelectItem>
+                          <SelectItem value="van_body">Van Body</SelectItem>
+                          <SelectItem value="other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="equipmentSubtype">Equipment Subtype</Label>
                       <Input
-                        id="equipmentWeight"
-                        type="number"
-                        {...form.register("equipmentWeight", { valueAsNumber: true })}
+                        id="equipmentSubtype"
+                        placeholder="e.g., Standard, Extended, Compact"
+                        {...form.register("equipmentSubtype")}
                       />
-                      {form.formState.errors.equipmentWeight && (
-                        <p className="text-sm text-destructive mt-1">{form.formState.errors.equipmentWeight.message}</p>
-                      )}
+                    </div>
+                    <div>
+                      <Label htmlFor="equipmentPrimaryMaterial">Primary Material</Label>
+                      <Select
+                        value={form.watch("equipmentPrimaryMaterial") || form.watch("equipmentMaterial") || ""}
+                        onValueChange={(value) => {
+                          form.setValue("equipmentPrimaryMaterial", value);
+                          form.setValue("equipmentMaterial", value); // Legacy compatibility
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select material" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="aluminum">Aluminum</SelectItem>
+                          <SelectItem value="steel">Steel</SelectItem>
+                          <SelectItem value="stainless_steel">Stainless Steel</SelectItem>
+                          <SelectItem value="composite">Composite</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="equipmentBodyCategory">Body Category</Label>
+                      <Input
+                        id="equipmentBodyCategory"
+                        placeholder="e.g., Service, Utility, Cargo"
+                        {...form.register("equipmentBodyCategory")}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="equipmentApplicationType">Application Type</Label>
+                      <Input
+                        id="equipmentApplicationType"
+                        placeholder="e.g., Commercial, Fleet, Municipal"
+                        {...form.register("equipmentApplicationType")}
+                      />
                     </div>
                   </div>
-                  <div>
-                    <Label htmlFor="equipmentMaterial">Material</Label>
-                    <Select
-                      value={form.watch("equipmentMaterial") || ""}
-                      onValueChange={(value) => form.setValue("equipmentMaterial", value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select material" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="aluminum">Aluminum</SelectItem>
-                        <SelectItem value="steel">Steel</SelectItem>
-                        <SelectItem value="stainless_steel">Stainless Steel</SelectItem>
-                        <SelectItem value="composite">Composite</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="doorConfiguration">Door Configuration</Label>
-                    <Input
-                      id="doorConfiguration"
-                      placeholder="e.g., 2 side doors, 1 rear door"
-                      {...form.register("doorConfiguration")}
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="compartmentCount">Number of Compartments</Label>
-                    <Input
-                      id="compartmentCount"
-                      type="number"
-                      {...form.register("compartmentCount", { valueAsNumber: true })}
-                    />
-                  </div>
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="hasInteriorLighting"
-                        checked={form.watch("hasInteriorLighting") || false}
-                        onCheckedChange={(checked) => form.setValue("hasInteriorLighting", checked === true)}
-                      />
-                      <Label htmlFor="hasInteriorLighting" className="font-normal cursor-pointer">
-                        Has Interior Lighting
-                      </Label>
+
+                  {/* Dimensions & Weight */}
+                  <div className="space-y-4 border-b pb-4">
+                    <h3 className="text-lg font-semibold">Dimensions & Weight</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="equipmentLength">Length (inches)</Label>
+                        <Input
+                          id="equipmentLength"
+                          type="number"
+                          {...form.register("equipmentLength", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentWidth">Width (inches)</Label>
+                        <Input
+                          id="equipmentWidth"
+                          type="number"
+                          {...form.register("equipmentWidth", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentHeight">Height (inches)</Label>
+                        <Input
+                          id="equipmentHeight"
+                          type="number"
+                          {...form.register("equipmentHeight", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentWeight">Weight (lbs)</Label>
+                        <Input
+                          id="equipmentWeight"
+                          type="number"
+                          {...form.register("equipmentWeight", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentInteriorLength">Interior Length (inches)</Label>
+                        <Input
+                          id="equipmentInteriorLength"
+                          type="number"
+                          {...form.register("equipmentInteriorLength", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentInteriorWidth">Interior Width (inches)</Label>
+                        <Input
+                          id="equipmentInteriorWidth"
+                          type="number"
+                          {...form.register("equipmentInteriorWidth", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentInteriorHeight">Interior Height (inches)</Label>
+                        <Input
+                          id="equipmentInteriorHeight"
+                          type="number"
+                          {...form.register("equipmentInteriorHeight", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentUsableVolumeCubicFeet">Usable Volume (cubic feet)</Label>
+                        <Input
+                          id="equipmentUsableVolumeCubicFeet"
+                          type="number"
+                          {...form.register("equipmentUsableVolumeCubicFeet", { valueAsNumber: true })}
+                        />
+                      </div>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="hasExteriorLighting"
-                        checked={form.watch("hasExteriorLighting") || false}
-                        onCheckedChange={(checked) => form.setValue("hasExteriorLighting", checked === true)}
+                  </div>
+
+                  {/* Configuration Details */}
+                  <div className="space-y-4 border-b pb-4">
+                    <h3 className="text-lg font-semibold">Configuration Details</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="equipmentConfigName">Configuration Name</Label>
+                        <Input
+                          id="equipmentConfigName"
+                          placeholder="e.g., Standard Service Body"
+                          {...form.register("equipmentConfigName")}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentConfigCode">Configuration Code</Label>
+                        <Input
+                          id="equipmentConfigCode"
+                          placeholder="e.g., KUV-84-STD"
+                          {...form.register("equipmentConfigCode")}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentModelNumber">Model Number</Label>
+                        <Input
+                          id="equipmentModelNumber"
+                          placeholder="e.g., M12345"
+                          {...form.register("equipmentModelNumber")}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentMaximumPayload">Maximum Payload (lbs)</Label>
+                        <Input
+                          id="equipmentMaximumPayload"
+                          type="number"
+                          {...form.register("equipmentMaximumPayload", { valueAsNumber: true })}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor="equipmentDoorConfiguration">Door Configuration</Label>
+                      <Input
+                        id="equipmentDoorConfiguration"
+                        placeholder="e.g., 2 side doors, 1 rear door"
+                        {...form.register("equipmentDoorConfiguration")}
+                        value={form.watch("equipmentDoorConfiguration") || form.watch("doorConfiguration") || ""}
+                        onChange={(e) => {
+                          form.setValue("equipmentDoorConfiguration", e.target.value);
+                          form.setValue("doorConfiguration", e.target.value); // Legacy compatibility
+                        }}
                       />
-                      <Label htmlFor="hasExteriorLighting" className="font-normal cursor-pointer">
-                        Has Exterior Lighting
-                      </Label>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div>
+                        <Label htmlFor="equipmentCompartmentCount">Compartments</Label>
+                        <Input
+                          id="equipmentCompartmentCount"
+                          type="number"
+                          {...form.register("equipmentCompartmentCount", { valueAsNumber: true })}
+                          value={form.watch("equipmentCompartmentCount") || form.watch("compartmentCount") || ""}
+                          onChange={(e) => {
+                            const val = e.target.value ? parseInt(e.target.value) : undefined;
+                            form.setValue("equipmentCompartmentCount", val);
+                            form.setValue("compartmentCount", val); // Legacy compatibility
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentDrawerCount">Drawers</Label>
+                        <Input
+                          id="equipmentDrawerCount"
+                          type="number"
+                          {...form.register("equipmentDrawerCount", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentShelfCount">Shelves</Label>
+                        <Input
+                          id="equipmentShelfCount"
+                          type="number"
+                          {...form.register("equipmentShelfCount", { valueAsNumber: true })}
+                        />
+                      </div>
                     </div>
                   </div>
-                </>
+
+                  {/* Features & Options */}
+                  <div className="space-y-4 border-b pb-4">
+                    <h3 className="text-lg font-semibold">Features & Options</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentHasInteriorLighting"
+                          checked={form.watch("equipmentHasInteriorLighting") ?? form.watch("hasInteriorLighting") ?? false}
+                          onCheckedChange={(checked) => {
+                            form.setValue("equipmentHasInteriorLighting", checked === true);
+                            form.setValue("hasInteriorLighting", checked === true); // Legacy compatibility
+                          }}
+                        />
+                        <Label htmlFor="equipmentHasInteriorLighting" className="font-normal cursor-pointer">
+                          Interior Lighting
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentHasExteriorLighting"
+                          checked={form.watch("equipmentHasExteriorLighting") ?? form.watch("hasExteriorLighting") ?? false}
+                          onCheckedChange={(checked) => {
+                            form.setValue("equipmentHasExteriorLighting", checked === true);
+                            form.setValue("hasExteriorLighting", checked === true); // Legacy compatibility
+                          }}
+                        />
+                        <Label htmlFor="equipmentHasExteriorLighting" className="font-normal cursor-pointer">
+                          Exterior Lighting
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentHasPowerOutlets"
+                          checked={form.watch("equipmentHasPowerOutlets") || false}
+                          onCheckedChange={(checked) => form.setValue("equipmentHasPowerOutlets", checked === true)}
+                        />
+                        <Label htmlFor="equipmentHasPowerOutlets" className="font-normal cursor-pointer">
+                          Power Outlets
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentHasCraneProvisions"
+                          checked={form.watch("equipmentHasCraneProvisions") || false}
+                          onCheckedChange={(checked) => form.setValue("equipmentHasCraneProvisions", checked === true)}
+                        />
+                        <Label htmlFor="equipmentHasCraneProvisions" className="font-normal cursor-pointer">
+                          Crane Provisions
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentHasLadderRackProvisions"
+                          checked={form.watch("equipmentHasLadderRackProvisions") || false}
+                          onCheckedChange={(checked) => form.setValue("equipmentHasLadderRackProvisions", checked === true)}
+                        />
+                        <Label htmlFor="equipmentHasLadderRackProvisions" className="font-normal cursor-pointer">
+                          Ladder Rack Provisions
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentHasStakePockets"
+                          checked={form.watch("equipmentHasStakePockets") || false}
+                          onCheckedChange={(checked) => form.setValue("equipmentHasStakePockets", checked === true)}
+                        />
+                        <Label htmlFor="equipmentHasStakePockets" className="font-normal cursor-pointer">
+                          Stake Pockets
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentHasTieDowns"
+                          checked={form.watch("equipmentHasTieDowns") || false}
+                          onCheckedChange={(checked) => form.setValue("equipmentHasTieDowns", checked === true)}
+                        />
+                        <Label htmlFor="equipmentHasTieDowns" className="font-normal cursor-pointer">
+                          Tie Downs
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentRequiresSubframe"
+                          checked={form.watch("equipmentRequiresSubframe") || false}
+                          onCheckedChange={(checked) => form.setValue("equipmentRequiresSubframe", checked === true)}
+                        />
+                        <Label htmlFor="equipmentRequiresSubframe" className="font-normal cursor-pointer">
+                          Requires Subframe
+                        </Label>
+                      </div>
+                    </div>
+                    {form.watch("equipmentHasPowerOutlets") && (
+                      <div>
+                        <Label htmlFor="equipmentElectricalSystemVoltage">Electrical System Voltage</Label>
+                        <Input
+                          id="equipmentElectricalSystemVoltage"
+                          type="number"
+                          placeholder="e.g., 12, 24"
+                          {...form.register("equipmentElectricalSystemVoltage", { valueAsNumber: true })}
+                        />
+                      </div>
+                    )}
+                    {form.watch("equipmentHasCraneProvisions") && (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="equipmentCraneMountingLocation">Crane Mounting Location</Label>
+                          <Input
+                            id="equipmentCraneMountingLocation"
+                            placeholder="e.g., Front, Rear, Center"
+                            {...form.register("equipmentCraneMountingLocation")}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="equipmentMaxCraneCapacity">Max Crane Capacity (lbs)</Label>
+                          <Input
+                            id="equipmentMaxCraneCapacity"
+                            type="number"
+                            {...form.register("equipmentMaxCraneCapacity", { valueAsNumber: true })}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {form.watch("equipmentHasLadderRackProvisions") && (
+                      <div>
+                        <Label htmlFor="equipmentLadderRackType">Ladder Rack Type</Label>
+                        <Input
+                          id="equipmentLadderRackType"
+                          placeholder="e.g., Standard, Heavy Duty"
+                          {...form.register("equipmentLadderRackType")}
+                        />
+                      </div>
+                    )}
+                    {form.watch("equipmentHasTieDowns") && (
+                      <div>
+                        <Label htmlFor="equipmentTieDownCount">Tie Down Count</Label>
+                        <Input
+                          id="equipmentTieDownCount"
+                          type="number"
+                          {...form.register("equipmentTieDownCount", { valueAsNumber: true })}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Compatibility & Installation */}
+                  <div className="space-y-4 border-b pb-4">
+                    <h3 className="text-lg font-semibold">Compatibility & Installation</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="equipmentMinimumCabToAxle">Min Cab-to-Axle (inches)</Label>
+                        <Input
+                          id="equipmentMinimumCabToAxle"
+                          type="number"
+                          {...form.register("equipmentMinimumCabToAxle", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentMaximumCabToAxle">Max Cab-to-Axle (inches)</Label>
+                        <Input
+                          id="equipmentMaximumCabToAxle"
+                          type="number"
+                          {...form.register("equipmentMaximumCabToAxle", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentRecommendedCabToAxle">Recommended Cab-to-Axle (inches)</Label>
+                        <Input
+                          id="equipmentRecommendedCabToAxle"
+                          type="number"
+                          {...form.register("equipmentRecommendedCabToAxle", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentMountingType">Mounting Type</Label>
+                        <Input
+                          id="equipmentMountingType"
+                          placeholder="e.g., Direct, Subframe, Rails"
+                          {...form.register("equipmentMountingType")}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentCompatibleGvwrMin">Compatible GVWR Min (lbs)</Label>
+                        <Input
+                          id="equipmentCompatibleGvwrMin"
+                          type="number"
+                          {...form.register("equipmentCompatibleGvwrMin", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentCompatibleGvwrMax">Compatible GVWR Max (lbs)</Label>
+                        <Input
+                          id="equipmentCompatibleGvwrMax"
+                          type="number"
+                          {...form.register("equipmentCompatibleGvwrMax", { valueAsNumber: true })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Pricing & Lead Time */}
+                  <div className="space-y-4 border-b pb-4">
+                    <h3 className="text-lg font-semibold">Pricing & Lead Time</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="equipmentStartingMsrp">Starting MSRP</Label>
+                        <Input
+                          id="equipmentStartingMsrp"
+                          type="number"
+                          {...form.register("equipmentStartingMsrp", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentBaseMsrp">Base MSRP</Label>
+                        <Input
+                          id="equipmentBaseMsrp"
+                          type="number"
+                          {...form.register("equipmentBaseMsrp", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentDealerCost">Dealer Cost</Label>
+                        <Input
+                          id="equipmentDealerCost"
+                          type="number"
+                          {...form.register("equipmentDealerCost", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentLeadTimeDays">Lead Time (days)</Label>
+                        <Input
+                          id="equipmentLeadTimeDays"
+                          type="number"
+                          {...form.register("equipmentLeadTimeDays", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentInstallationLaborHours">Installation Labor Hours</Label>
+                        <Input
+                          id="equipmentInstallationLaborHours"
+                          type="number"
+                          step="0.5"
+                          {...form.register("equipmentInstallationLaborHours", { valueAsNumber: true })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="equipmentEstimatedInstallationCost">Estimated Installation Cost</Label>
+                        <Input
+                          id="equipmentEstimatedInstallationCost"
+                          type="number"
+                          {...form.register("equipmentEstimatedInstallationCost", { valueAsNumber: true })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Additional Details */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold">Additional Details</h3>
+                    <div>
+                      <Label htmlFor="equipmentMarketingDescription">Marketing Description</Label>
+                      <Textarea
+                        id="equipmentMarketingDescription"
+                        rows={3}
+                        placeholder="Describe the equipment's features and benefits..."
+                        {...form.register("equipmentMarketingDescription")}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="equipmentNotes">Notes</Label>
+                      <Textarea
+                        id="equipmentNotes"
+                        rows={3}
+                        placeholder="Additional notes about this equipment..."
+                        {...form.register("equipmentNotes")}
+                      />
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentMeetsFmvss"
+                          checked={form.watch("equipmentMeetsFmvss") ?? true}
+                          onCheckedChange={(checked) => form.setValue("equipmentMeetsFmvss", checked === true)}
+                        />
+                        <Label htmlFor="equipmentMeetsFmvss" className="font-normal cursor-pointer">
+                          Meets FMVSS
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="equipmentDotApproved"
+                          checked={form.watch("equipmentDotApproved") ?? true}
+                          onCheckedChange={(checked) => form.setValue("equipmentDotApproved", checked === true)}
+                        />
+                        <Label htmlFor="equipmentDotApproved" className="font-normal cursor-pointer">
+                          DOT Approved
+                        </Label>
+                      </div>
+                    </div>
+                    {form.watch("equipmentMeetsFmvss") === false && (
+                      <div>
+                        <Label htmlFor="equipmentFmvssComplianceNotes">FMVSS Compliance Notes</Label>
+                        <Textarea
+                          id="equipmentFmvssComplianceNotes"
+                          rows={2}
+                          placeholder="Notes about FMVSS compliance..."
+                          {...form.register("equipmentFmvssComplianceNotes")}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -1329,7 +1854,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                   <Label htmlFor="priceType">Price Type</Label>
                   <Select
                     value={form.watch("priceType") || "negotiable"}
-                    onValueChange={(value) => form.setValue("priceType", value as any)}
+                    onValueChange={(value) => form.setValue("priceType", value as "negotiable" | "fixed" | "call_for_price")}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1370,7 +1895,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                   <Label htmlFor="condition">Condition</Label>
                   <Select
                     value={form.watch("condition")}
-                    onValueChange={(value) => form.setValue("condition", value as any)}
+                    onValueChange={(value) => form.setValue("condition", value as "new" | "used" | "certified_pre_owned" | "demo")}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1420,7 +1945,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                   <Label htmlFor="paintCondition">Paint Condition</Label>
                   <Select
                     value={form.watch("paintCondition") || ""}
-                    onValueChange={(value) => form.setValue("paintCondition", value as any)}
+                    onValueChange={(value) => form.setValue("paintCondition", value as "excellent" | "good" | "fair" | "poor")}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select condition" />
@@ -1437,7 +1962,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
                   <Label htmlFor="interiorCondition">Interior Condition</Label>
                   <Select
                     value={form.watch("interiorCondition") || ""}
-                    onValueChange={(value) => form.setValue("interiorCondition", value as any)}
+                    onValueChange={(value) => form.setValue("interiorCondition", value as "excellent" | "good" | "fair" | "poor")}
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Select condition" />
@@ -1520,58 +2045,81 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
             />
           )}
 
-          {currentStep === 5 && (
-            <div className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Vehicle</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="font-semibold">
-                    {form.watch("year")} {form.watch("make")} {form.watch("model")} {form.watch("series")}
-                  </p>
-                  <p className="text-sm text-muted-foreground">VIN: {form.watch("vin")}</p>
-                  <p className="text-sm text-muted-foreground">
-                    GVWR: {form.watch("gvwr")} lbs | Payload: {form.watch("payload")} lbs
-                  </p>
-                </CardContent>
-              </Card>
-
-              {hasEquipment && (
+          {currentStep === 5 && (() => {
+            // Helper function to safely format numeric values
+            const formatNumber = (value: number | undefined | null | any): string => {
+              if (value === undefined || value === null || (typeof value === 'number' && isNaN(value))) {
+                return "N/A";
+              }
+              if (typeof value === 'number') {
+                return value.toLocaleString();
+              }
+              return "N/A";
+            };
+            
+            const formatCurrency = (value: number | undefined | null | any): string => {
+              if (value === undefined || value === null || (typeof value === 'number' && isNaN(value))) {
+                return "N/A";
+              }
+              if (typeof value === 'number') {
+                return `$${value.toLocaleString()}`;
+              }
+              return "N/A";
+            };
+            
+            return (
+              <div className="space-y-4">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Equipment</CardTitle>
+                    <CardTitle>Vehicle</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <p className="font-semibold">
-                      {form.watch("equipmentManufacturer")} {form.watch("equipmentProductLine")}
+                      {form.watch("year")} {form.watch("make")} {form.watch("model")} {form.watch("series")}
                     </p>
+                    <p className="text-sm text-muted-foreground">VIN: {form.watch("vin") || "N/A"}</p>
                     <p className="text-sm text-muted-foreground">
-                      Length: {form.watch("equipmentLength")}" | Weight: {form.watch("equipmentWeight")} lbs
+                      GVWR: {formatNumber(form.watch("gvwr"))} lbs | Payload: {formatNumber(form.watch("payload"))} lbs
                     </p>
                   </CardContent>
                 </Card>
-              )}
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Pricing</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="font-semibold">Asking Price: ${form.watch("askingPrice")?.toLocaleString()}</p>
-                  {form.watch("specialPrice") && (
-                    <p className="text-sm text-muted-foreground">
-                      Special Price: ${form.watch("specialPrice")?.toLocaleString()}
-                    </p>
-                  )}
-                  <p className="text-sm text-muted-foreground">Condition: {form.watch("condition")}</p>
-                  {form.watch("stockNumber") && (
-                    <p className="text-sm text-muted-foreground">Stock #: {form.watch("stockNumber")}</p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )}
+                {hasEquipment && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Equipment</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="font-semibold">
+                        {form.watch("equipmentManufacturer")} {form.watch("equipmentProductLine")}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Length: {formatNumber(form.watch("equipmentLength"))}" | Weight: {formatNumber(form.watch("equipmentWeight"))} lbs
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Pricing</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="font-semibold">Asking Price: {formatCurrency(form.watch("askingPrice"))}</p>
+                    {form.watch("specialPrice") && !isNaN(form.watch("specialPrice") as number) && (
+                      <p className="text-sm text-muted-foreground">
+                        Special Price: {formatCurrency(form.watch("specialPrice"))}
+                      </p>
+                    )}
+                    <p className="text-sm text-muted-foreground">Condition: {form.watch("condition") || "N/A"}</p>
+                    {form.watch("stockNumber") && (
+                      <p className="text-sm text-muted-foreground">Stock #: {form.watch("stockNumber")}</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 
@@ -1596,6 +2144,7 @@ export function CreateListingForm({ isOnboarding = false }: CreateListingFormPro
           <Button 
             type="button" 
             onClick={nextStep}
+disabled={false}
             className="min-w-[120px] bg-primary hover:bg-primary/90"
           >
             Next

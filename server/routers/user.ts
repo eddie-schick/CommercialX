@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { router, protectedProcedure, publicProcedure } from '../_core/trpc';
 import { TRPCError } from '@trpc/server';
+import { ENV } from '../_core/env';
 
 /**
  * User Router for Supabase Auth
@@ -38,7 +39,6 @@ export const userRouter = router({
 
         // Create a Supabase client with the user's session
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -90,7 +90,6 @@ export const userRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -135,7 +134,6 @@ export const userRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -177,7 +175,6 @@ export const userRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -187,10 +184,27 @@ export const userRouter = router({
           },
         });
 
+        // Try the dedicated RPC function first
         const { data, error } = await userSupabase.rpc('"01. Organization".user_can_create_listings');
         
         if (error) {
-          console.error('Failed to check permissions:', error);
+          // Fallback: Use get_current_user_profile if the function doesn't exist yet
+          if (error.code === 'PGRST202' || error.message?.includes('Could not find the function')) {
+            console.log('[canCreateListings] Function not found, using fallback check');
+            const { data: profileData } = await userSupabase.rpc('get_current_user_profile');
+            
+            if (profileData) {
+              const profile = profileData as any;
+              // Check if user has organization, dealer, and appropriate role
+              const hasOrg = profile.hasOrganization && profile.organization_id;
+              const hasDealer = profile.hasDealer;
+              const role = profile.role;
+              const canCreate = hasOrg && hasDealer && role && role !== 'viewer';
+              return canCreate || false;
+            }
+          } else {
+            console.error('Failed to check permissions:', error);
+          }
           return false;
         }
         
@@ -198,6 +212,53 @@ export const userRouter = router({
       } catch (error) {
         console.error('Error checking listing permissions:', error);
         return false;
+      }
+    }),
+
+  // Diagnostic endpoint to check why user cannot create listings
+  diagnoseListingPermission: publicProcedure
+    .query(async ({ ctx }) => {
+      try {
+        const authHeader = ctx.req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          return {
+            error: 'No authorization token provided',
+            diagnostic: null,
+          };
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import('@supabase/supabase-js');
+        
+        const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        });
+
+        // Try the diagnostic function
+        const { data, error } = await userSupabase.rpc('"01. Organization".diagnose_listing_permission');
+        
+        if (error) {
+          console.error('Failed to diagnose listing permissions:', error);
+          return {
+            error: error.message || 'Failed to diagnose permissions',
+            diagnostic: null,
+          };
+        }
+        
+        return {
+          error: null,
+          diagnostic: Array.isArray(data) ? data[0] : data,
+        };
+      } catch (error) {
+        console.error('Error diagnosing listing permissions:', error);
+        return {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          diagnostic: null,
+        };
       }
     }),
 
@@ -219,7 +280,6 @@ export const userRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -279,7 +339,6 @@ export const userRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -339,7 +398,6 @@ export const userRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -349,11 +407,51 @@ export const userRouter = router({
           },
         });
 
-        // Get dealer ID
-        const { data: dealerId, error: dealerIdError } = await userSupabase.rpc('get_user_dealer_id');
+        // Get user profile to get organization_id
+        const { data: profileData, error: profileError } = await userSupabase.rpc('get_current_user_profile');
         
-        if (dealerIdError || !dealerId) {
-          return null; // User doesn't have a dealer record
+        if (profileError) {
+          console.error('[getDealer] Profile RPC error:', profileError);
+          return null;
+        }
+
+        // Handle both array (old) and object (new JSONB) formats
+        const profile = Array.isArray(profileData) ? profileData[0] : profileData;
+        
+        if (!profile || profile.error || !profile.organization_id) {
+          return null; // User doesn't have an organization
+        }
+
+        // Try to get dealer ID from profile first
+        let dealerId: number | null = null;
+        if (profile.dealer?.id) {
+          dealerId = profile.dealer.id;
+        } else {
+          // Fallback: Try RPC function
+          const { data: dealerIdData, error: dealerIdError } = await userSupabase.rpc('get_user_dealer_id');
+          
+          if (!dealerIdError && dealerIdData) {
+            dealerId = dealerIdData;
+          } else {
+            // Last resort: Query directly by organization_id
+            const { querySchemaTable } = await import('../lib/supabase-db');
+            const dealers = await querySchemaTable<{ id: number }>(
+              '02a. Dealership',
+              'dealers',
+              {
+                where: { organization_id: profile.organization_id },
+                limit: 1,
+              }
+            );
+            
+            if (dealers.length > 0) {
+              dealerId = dealers[0].id;
+            }
+          }
+        }
+        
+        if (!dealerId) {
+          return null; // No dealer record found
         }
 
         // Get full dealer details
@@ -373,8 +471,106 @@ export const userRouter = router({
 
         return dealers[0];
       } catch (error) {
-        console.error('Error fetching dealer:', error);
+        console.error('[getDealer] Error fetching dealer:', error);
         return null;
+      }
+    }),
+
+  // Diagnostic endpoint to check auth status
+  checkAuthStatus: publicProcedure
+    .query(async ({ ctx }) => {
+      try {
+        const authHeader = ctx.req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+          return {
+            authenticated: false,
+            hasOrganization: false,
+            hasDealer: false,
+            organizationId: null,
+            dealerId: null,
+            error: 'No authorization token provided',
+          };
+        }
+
+        const token = authHeader.substring(7);
+        const { createClient } = await import('@supabase/supabase-js');
+        
+        const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
+          global: {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        });
+
+        const { data: { user }, error: authError } = await userSupabase.auth.getUser();
+        
+        if (authError || !user) {
+          return {
+            authenticated: false,
+            hasOrganization: false,
+            hasDealer: false,
+            organizationId: null,
+            dealerId: null,
+            error: authError?.message || 'Not authenticated',
+          };
+        }
+
+        // Get profile
+        const { data: profileData, error: profileError } = await userSupabase.rpc('get_current_user_profile');
+        
+        if (profileError || !profileData) {
+          return {
+            authenticated: true,
+            hasOrganization: false,
+            hasDealer: false,
+            organizationId: null,
+            dealerId: null,
+            error: profileError?.message || 'No profile found',
+          };
+        }
+
+        const profile = Array.isArray(profileData) ? profileData[0] : profileData;
+        const organizationId = profile?.organization_id || null;
+        
+        // Try to get dealer ID
+        let dealerId: number | null = null;
+        if (profile?.dealer?.id) {
+          dealerId = profile.dealer.id;
+        } else if (organizationId) {
+          // Query directly
+          const { querySchemaTable } = await import('../lib/supabase-db');
+          const dealers = await querySchemaTable<{ id: number }>(
+            '02a. Dealership',
+            'dealers',
+            {
+              where: { organization_id: organizationId },
+              limit: 1,
+            }
+          );
+          
+          if (dealers.length > 0) {
+            dealerId = dealers[0].id;
+          }
+        }
+
+        return {
+          authenticated: true,
+          hasOrganization: !!organizationId,
+          hasDealer: !!dealerId,
+          organizationId,
+          dealerId,
+          error: null,
+        };
+      } catch (error) {
+        return {
+          authenticated: false,
+          hasOrganization: false,
+          hasDealer: false,
+          organizationId: null,
+          dealerId: null,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
       }
     }),
 
@@ -385,7 +581,6 @@ export const userRouter = router({
         const { getSupabaseClient } = await import('../_core/supabase');
         const supabase = getSupabaseClient();
         const { querySchemaTable } = await import('../lib/supabase-db');
-        const { ENV } = await import('../_core/env');
         
         let types: any[] = [];
         
@@ -485,7 +680,6 @@ export const userRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {
@@ -617,7 +811,6 @@ export const userRouter = router({
 
         const token = authHeader.substring(7);
         const { createClient } = await import('@supabase/supabase-js');
-        const { ENV } = await import('../_core/env');
         
         const userSupabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
           global: {

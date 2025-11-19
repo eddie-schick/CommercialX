@@ -40,18 +40,27 @@ export default function VerifyEmail() {
           // Check if user needs organization setup
           const accountType = user.user_metadata?.accountType || 'dealer';
           if (accountType === 'dealer') {
+            // Wait a moment for the trigger to create organization, then check
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
             // Check if organization exists
             const { trpc } = await import('@/lib/trpc');
-            const hasOrg = await trpc.auth.hasOrganization.query();
+            let hasOrg = false;
+            try {
+              hasOrg = await trpc.auth.hasOrganization.query();
+            } catch (error) {
+              console.error('Error checking organization:', error);
+            }
             
             if (!hasOrg) {
+              // Organization not created by trigger, redirect to onboarding
               setTimeout(() => {
                 setLocation('/onboarding/organization');
-              }, 2000);
+              }, 1000);
             } else {
               setTimeout(() => {
                 setLocation('/dealer');
-              }, 2000);
+              }, 1000);
             }
           } else {
             setTimeout(() => {
@@ -122,7 +131,7 @@ export default function VerifyEmail() {
         type: 'signup',
         email: email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/verify?token=`,
+          emailRedirectTo: `${window.location.origin}/auth/verify`,
         },
       });
 

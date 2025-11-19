@@ -28,11 +28,29 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Log environment configuration on startup
+  console.log('[Server] Starting server...');
+  console.log('[Server] DATABASE_URL configured:', !!process.env.DATABASE_URL);
+  if (process.env.DATABASE_URL) {
+    // Mask password in logs for security
+    const maskedUrl = process.env.DATABASE_URL.replace(/:([^:@]+)@/, ':****@');
+    console.log('[Server] DATABASE_URL:', maskedUrl);
+  }
+  
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  
+  // Ensure storage bucket exists on startup
+  try {
+    const { ensureListingImagesBucket } = await import("../storage");
+    await ensureListingImagesBucket();
+  } catch (error) {
+    console.warn("[Server] Could not ensure storage bucket exists:", error);
+  }
+  
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // tRPC API

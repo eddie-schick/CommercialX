@@ -113,11 +113,98 @@ async function verifyUserPermission(
  */
 async function canUserCreateListings(supabase: SupabaseClient): Promise<boolean> {
   try {
-    const { data, error } = await supabase.rpc('"01. Organization".user_can_create_listings');
-    
-    if (error) {
-      console.error('Failed to check listing permissions:', error);
+    // First verify we can get the current user (to ensure auth context is working)
+    // Note: getUser() without arguments should work if client was created with Authorization header
+    // But we'll try it and if it fails, that's a sign the auth context isn't set up correctly
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) {
+      console.error('[canUserCreateListings] Cannot get authenticated user:', {
+        error: userError,
+        message: userError?.message,
+        code: userError?.code,
+      });
+      // This is a critical failure - if we can't get the user, auth.uid() in SQL will also fail
       return false;
+    }
+    console.log('[canUserCreateListings] Authenticated user ID:', user.id);
+    
+    // Try the RPC function first
+    let data: boolean | null = null;
+    let rpcError: any = null;
+    
+    try {
+      const result = await supabase.rpc('"01. Organization".user_can_create_listings');
+      data = result.data;
+      rpcError = result.error;
+    } catch (rpcException) {
+      console.error('[canUserCreateListings] RPC exception (not an error object):', rpcException);
+      rpcError = rpcException;
+    }
+    
+    if (rpcError) {
+      console.error('[canUserCreateListings] RPC error:', {
+        code: rpcError.code,
+        message: rpcError.message,
+        details: rpcError.details,
+        hint: rpcError.hint,
+        error: rpcError,
+      });
+      
+      // Always try fallback if RPC fails (for any reason)
+      console.log('[canUserCreateListings] RPC failed, using fallback check with get_current_user_profile');
+      try {
+        const { data: profileData, error: profileError } = await supabase.rpc('get_current_user_profile');
+        
+        if (profileError) {
+          console.error('[canUserCreateListings] Fallback profile check also failed:', profileError);
+          return false;
+        }
+        
+        if (profileData) {
+          const profile = Array.isArray(profileData) ? profileData[0] : profileData;
+          console.log('[canUserCreateListings] Profile data:', {
+            hasOrganization: profile?.hasOrganization,
+            organization_id: profile?.organization_id,
+            hasDealer: profile?.hasDealer,
+            role: profile?.role,
+          });
+          
+          // Check if user has organization, dealer, and appropriate role
+          const hasOrg = profile?.hasOrganization && profile?.organization_id;
+          const hasDealer = profile?.hasDealer;
+          const role = profile?.role;
+          const canCreate = hasOrg && hasDealer && role && role !== 'viewer';
+          console.log('[canUserCreateListings] Fallback check result:', canCreate, { hasOrg, hasDealer, role });
+          return canCreate || false;
+        }
+      } catch (fallbackError) {
+        console.error('[canUserCreateListings] Fallback check exception:', fallbackError);
+        return false;
+      }
+      
+      return false;
+    }
+    
+    console.log('[canUserCreateListings] Permission check result:', data);
+    
+    // If permission check failed, try to get diagnostic info for better error messages
+    if (!data) {
+      try {
+        const { data: diagnosticData, error: diagError } = await supabase.rpc('"01. Organization".diagnose_listing_permission');
+        if (diagError) {
+          console.error('[canUserCreateListings] Diagnostic function error:', diagError);
+        } else if (diagnosticData) {
+          const diagnostic = Array.isArray(diagnosticData) ? diagnosticData[0] : diagnosticData;
+          if (diagnostic?.failure_reasons && diagnostic.failure_reasons.length > 0) {
+            console.log('[canUserCreateListings] Permission denied. Reasons:', diagnostic.failure_reasons);
+          } else {
+            console.log('[canUserCreateListings] Diagnostic data:', diagnostic);
+          }
+        }
+      } catch (diagError) {
+        // Ignore diagnostic errors, just log them
+        console.warn('[canUserCreateListings] Could not get diagnostic info:', diagError);
+      }
     }
     
     return data || false;
@@ -446,18 +533,24 @@ export async function findOrCreateEquipment(
   formData: ListingFormData
 ): Promise<number | null> {
   // 1. If no equipment, return null
-  if (!formData.hasEquipment || !formData.equipmentManufacturer) {
+  // Map legacy field names to new field names
+  const upfitterName = (formData as any).equipmentUpfitterName || (formData as any).equipmentManufacturer;
+  if (!formData.hasEquipment || !upfitterName) {
     return null;
   }
+  const productLine = (formData as any).equipmentProductLine;
+  const modelName = (formData as any).equipmentModelName;
+  const equipmentType = (formData as any).equipmentType || "other";
+  const primaryMaterial = (formData as any).equipmentPrimaryMaterial || (formData as any).equipmentMaterial;
 
-  // 2. Search for existing equipment by manufacturer + product_line
+  // 2. Search for existing equipment by upfitter_name + product_line
   const existingEquipment = await querySchemaTable<Equipment>(
     "04. Equipment Data",
     "equipment",
     {
       where: {
-        manufacturer: formData.equipmentManufacturer,
-        product_line: formData.equipmentProductLine || null,
+        upfitter_name: upfitterName,
+        product_line: productLine || null,
       },
       limit: 1,
     }
@@ -468,18 +561,22 @@ export async function findOrCreateEquipment(
   if (existingEquipment.length > 0) {
     equipmentId = existingEquipment[0].id;
   } else {
-    // Create new equipment
+    // Create new equipment with all available fields
     const newEquipment = await insertSchemaTable<Equipment>(
       "04. Equipment Data",
       "equipment",
       {
-        manufacturer: formData.equipmentManufacturer,
-        product_line: formData.equipmentProductLine || null,
-        equipment_type: formData.equipmentType || "other",
-        data_source: "dealer_input",
-        created_by_dealer_id: dealerId,
-        needs_verification: true,
-        confidence_score: 0.8,
+        upfitter_name: upfitterName,
+        product_line: productLine || "Unknown",
+        model_name: modelName || "Unknown",
+        equipment_type: equipmentType,
+        equipment_subtype: (formData as any).equipmentSubtype || null,
+        primary_material: primaryMaterial || "steel",
+        body_category: (formData as any).equipmentBodyCategory || null,
+        application_type: (formData as any).equipmentApplicationType || null,
+        starting_msrp: (formData as any).equipmentStartingMsrp || null,
+        marketing_description: (formData as any).equipmentMarketingDescription || null,
+        status: "active",
       }
     );
     equipmentId = newEquipment.id;
@@ -523,21 +620,69 @@ export async function findOrCreateEquipment(
     return matchingConfig.id;
   }
 
-  // 5. Create new equipment_config with all available fields
+  // 5. Create new equipment_config with all available fields from 04. Equipment Data schema
   const newConfig = await insertSchemaTable<EquipmentConfig>(
     "04. Equipment Data",
     "equipment_config",
     {
       equipment_id: equipmentId,
-      length_inches: formData.equipmentLength || null,
+      config_name: (formData as any).equipmentConfigName || `${upfitterName} ${productLine || modelName || "Config"}`,
+      config_code: (formData as any).equipmentConfigCode || null,
+      model_number: (formData as any).equipmentModelNumber || null,
+      length_inches: (formData as any).equipmentLength || null,
       width_inches: (formData as any).equipmentWidth || null,
       height_inches: (formData as any).equipmentHeight || null,
-      weight_lbs: formData.equipmentWeight || null,
-      material: (formData as any).equipmentMaterial || null,
-      door_configuration: (formData as any).doorConfiguration || null,
-      compartment_count: (formData as any).compartmentCount || null,
-      has_interior_lighting: (formData as any).hasInteriorLighting || false,
-      has_exterior_lighting: (formData as any).hasExteriorLighting || false,
+      interior_length_inches: (formData as any).equipmentInteriorLength || null,
+      interior_width_inches: (formData as any).equipmentInteriorWidth || null,
+      interior_height_inches: (formData as any).equipmentInteriorHeight || null,
+      usable_volume_cubic_feet: (formData as any).equipmentUsableVolumeCubicFeet || null,
+      equipment_weight_lbs: (formData as any).equipmentWeight || null,
+      maximum_payload_lbs: (formData as any).equipmentMaximumPayload || null,
+      minimum_cab_to_axle_inches: (formData as any).equipmentMinimumCabToAxle || null,
+      maximum_cab_to_axle_inches: (formData as any).equipmentMaximumCabToAxle || null,
+      recommended_cab_to_axle_inches: (formData as any).equipmentRecommendedCabToAxle || null,
+      mounting_type: (formData as any).equipmentMountingType || null,
+      requires_subframe: (formData as any).equipmentRequiresSubframe || false,
+      compatible_gvwr_min: (formData as any).equipmentCompatibleGvwrMin || null,
+      compatible_gvwr_max: (formData as any).equipmentCompatibleGvwrMax || null,
+      material: (formData as any).equipmentMaterial || primaryMaterial || "steel",
+      gauge_thickness: (formData as any).equipmentGaugeThickness || null,
+      coating_finish: (formData as any).equipmentCoatingFinish || null,
+      corrosion_protection: (formData as any).equipmentCorrosionProtection || null,
+      tool_compartment_volume_cubic_feet: (formData as any).equipmentToolCompartmentVolume || null,
+      door_style: (formData as any).equipmentDoorStyle || null,
+      locking_mechanism: (formData as any).equipmentLockingMechanism || null,
+      door_configuration: (formData as any).equipmentDoorConfiguration || (formData as any).doorConfiguration || null,
+      compartment_count: (formData as any).equipmentCompartmentCount || (formData as any).compartmentCount || null,
+      drawer_count: (formData as any).equipmentDrawerCount || null,
+      shelf_count: (formData as any).equipmentShelfCount || null,
+      has_interior_lighting: (formData as any).equipmentHasInteriorLighting ?? (formData as any).hasInteriorLighting ?? false,
+      has_exterior_lighting: (formData as any).equipmentHasExteriorLighting ?? (formData as any).hasExteriorLighting ?? false,
+      has_power_outlets: (formData as any).equipmentHasPowerOutlets || false,
+      electrical_system_voltage: (formData as any).equipmentElectricalSystemVoltage || null,
+      has_crane_provisions: (formData as any).equipmentHasCraneProvisions || false,
+      crane_mounting_location: (formData as any).equipmentCraneMountingLocation || null,
+      max_crane_capacity_lbs: (formData as any).equipmentMaxCraneCapacity || null,
+      has_ladder_rack_provisions: (formData as any).equipmentHasLadderRackProvisions || false,
+      ladder_rack_type: (formData as any).equipmentLadderRackType || null,
+      has_stake_pockets: (formData as any).equipmentHasStakePockets || false,
+      has_tie_downs: (formData as any).equipmentHasTieDowns || false,
+      tie_down_count: (formData as any).equipmentTieDownCount || null,
+      front_axle_weight_distribution_lbs: (formData as any).equipmentFrontAxleWeightDistribution || null,
+      rear_axle_weight_distribution_lbs: (formData as any).equipmentRearAxleWeightDistribution || null,
+      center_of_gravity_from_rear_axle_inches: (formData as any).equipmentCenterOfGravityFromRearAxle || null,
+      base_msrp: (formData as any).equipmentBaseMsrp || null,
+      dealer_cost: (formData as any).equipmentDealerCost || null,
+      installation_labor_hours: (formData as any).equipmentInstallationLaborHours || null,
+      estimated_installation_cost: (formData as any).equipmentEstimatedInstallationCost || null,
+      lead_time_days: (formData as any).equipmentLeadTimeDays || 30,
+      minimum_order_quantity: (formData as any).equipmentMinimumOrderQuantity || 1,
+      meets_fmvss: (formData as any).equipmentMeetsFmvss ?? true,
+      fmvss_compliance_notes: (formData as any).equipmentFmvssComplianceNotes || null,
+      dot_approved: (formData as any).equipmentDotApproved ?? true,
+      notes: (formData as any).equipmentNotes || null,
+      is_active: true,
+      is_in_stock: false,
     }
   );
 
@@ -852,9 +997,91 @@ export async function createListingFromDealerInput(
     console.log('🔐 Verifying user authorization...');
     
     // Check if user can create listings
+    console.log('[createListingFromDealerInput] Checking user permissions...');
     const canCreate = await canUserCreateListings(supabase);
+    console.log('[createListingFromDealerInput] Permission check result:', canCreate);
+    
     if (!canCreate) {
-      throw new Error('User does not have permission to create listings');
+      // Try to get diagnostic info for better error message
+      let errorMessage = 'User does not have permission to create listings';
+      let diagnosticDetails: any = null;
+      
+      try {
+        console.log('[createListingFromDealerInput] Calling diagnostic function...');
+        const { data: diagnosticData, error: diagError } = await supabase.rpc('"01. Organization".diagnose_listing_permission');
+        
+        // Handle case where function doesn't exist (PGRST202) or other RPC errors
+        if (diagError) {
+          console.error('[createListingFromDealerInput] Diagnostic function error:', {
+            code: diagError.code,
+            message: diagError.message,
+            details: diagError.details,
+            hint: diagError.hint,
+          });
+          // If function doesn't exist, that's okay - just use default message
+          if (diagError.code === 'PGRST202' || diagError.message?.includes('Could not find the function')) {
+            console.log('[createListingFromDealerInput] Diagnostic function not found, using default message');
+          }
+        } else if (diagnosticData) {
+          try {
+            const diagnostic = Array.isArray(diagnosticData) ? diagnosticData[0] : diagnosticData;
+            diagnosticDetails = diagnostic;
+            console.log('[createListingFromDealerInput] Diagnostic data received:', JSON.stringify(diagnostic, null, 2));
+            
+            if (diagnostic && typeof diagnostic === 'object') {
+              // Build detailed error message with all diagnostic info
+              const parts: string[] = [];
+              
+              if (diagnostic.failure_reasons && Array.isArray(diagnostic.failure_reasons) && diagnostic.failure_reasons.length > 0) {
+                parts.push(...diagnostic.failure_reasons);
+              } else {
+                // If no failure reasons but permission denied, show what we know
+                parts.push('Permission check failed');
+                if (diagnostic.has_organization_user === false) {
+                  parts.push('No organization_users record found');
+                }
+                if (diagnostic.has_organization === false) {
+                  parts.push('No organization record found');
+                }
+                if (diagnostic.has_dealer === false) {
+                  parts.push('No dealer record found');
+                }
+                if (diagnostic.organization_type_can_list === false) {
+                  parts.push('Organization type does not allow listing vehicles');
+                }
+                if (diagnostic.organization_user_role === 'viewer') {
+                  parts.push('User role is "viewer" (cannot create listings)');
+                }
+                if (diagnostic.organization_user_status !== 'active') {
+                  parts.push(`Organization user status is "${diagnostic.organization_user_status}" (must be "active")`);
+                }
+                if (diagnostic.organization_status !== 'active') {
+                  parts.push(`Organization status is "${diagnostic.organization_status}" (must be "active")`);
+                }
+              }
+              
+              if (parts.length > 0) {
+                errorMessage = `Permission denied: ${parts.join('; ')}`;
+                console.log('[createListingFromDealerInput] Using diagnostic error message:', errorMessage);
+              } else {
+                console.warn('[createListingFromDealerInput] Diagnostic data present but no failure reasons identified:', diagnostic);
+              }
+            } else {
+              console.warn('[createListingFromDealerInput] Diagnostic data is not an object:', diagnostic);
+            }
+          } catch (parseError) {
+            console.error('[createListingFromDealerInput] Error parsing diagnostic data:', parseError);
+          }
+        } else {
+          console.warn('[createListingFromDealerInput] No diagnostic data returned (null or undefined)');
+        }
+      } catch (diagError) {
+        // If diagnostic fails completely, use default message - don't crash
+        console.error('[createListingFromDealerInput] Exception getting diagnostic info:', diagError instanceof Error ? diagError.message : String(diagError), diagError);
+      }
+      
+      console.error('[createListingFromDealerInput] Throwing permission error:', errorMessage);
+      throw new Error(errorMessage);
     }
 
     // Get dealer ID for current user (if not provided)

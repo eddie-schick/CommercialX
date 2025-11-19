@@ -37,10 +37,14 @@ export function ImageUploadZone({
       const newUrls = [...value, data.url];
       onChange(newUrls);
       setUploading((prev) => prev.filter((id) => id !== variables.filename));
-      toast.success("Image uploaded successfully");
+      toast.success("Image uploaded successfully", {
+        duration: 2000, // Auto-dismiss after 2 seconds
+      });
     },
     onError: (error: any, variables) => {
-      toast.error(error.message || "Failed to upload image");
+      toast.error(error.message || "Failed to upload image", {
+        duration: 3000, // Auto-dismiss after 3 seconds
+      });
       setUploading((prev) => prev.filter((id) => id !== variables.filename));
     },
   });

@@ -67,38 +67,41 @@ export function LoginForm() {
       console.log('[LoginForm] Sign in successful');
       toast.success('Signed in successfully!', { id: 'signin' });
       
-      // Wait for session to be established and stored - give it more time
-      console.log('[LoginForm] Waiting for session to be established...');
-      let sessionEstablished = false;
-      const maxWaitTime = 3000; // 3 seconds max
-      const checkInterval = 100; // Check every 100ms
-      const startTime = Date.now();
+      // Wait for session to be properly saved and verified
+      console.log('[LoginForm] Verifying session is saved...');
+      const client = getSupabaseClient();
       
-      while (!sessionEstablished && (Date.now() - startTime) < maxWaitTime) {
-        const supabase = getSupabaseClient();
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      // Wait for session to be available (with retries)
+      let sessionVerified = false;
+      let attempts = 0;
+      const maxAttempts = 10;
+      
+      while (!sessionVerified && attempts < maxAttempts) {
+        const { data: { session }, error: sessionError } = await client.auth.getSession();
         
-        if (session && session.user) {
-          console.log('[LoginForm] Session established:', session.user.id);
-          sessionEstablished = true;
+        if (session?.user && !sessionError) {
+          console.log('[LoginForm] Session verified on attempt', attempts + 1);
+          sessionVerified = true;
           break;
         }
         
-        await new Promise(resolve => setTimeout(resolve, checkInterval));
+        attempts++;
+        if (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
       }
       
-      if (!sessionEstablished) {
-        console.error('[LoginForm] Session verification failed - session not established after', maxWaitTime, 'ms');
+      if (!sessionVerified) {
+        console.error('[LoginForm] Session verification failed after', maxAttempts, 'attempts');
         setError({ 
-          message: 'Session could not be established. Please try again.',
+          message: 'Session could not be verified. Please try again.',
           retry: true 
         });
-        toast.error('Session could not be established. Please try again.', { id: 'signin' });
+        toast.error('Session verification failed. Please try again.', { id: 'signin' });
         return;
       }
 
       // Check email verification
-      const client = getSupabaseClient();
       const { data: { user }, error: userError } = await client.auth.getUser();
       
       if (userError) {
@@ -116,10 +119,12 @@ export function LoginForm() {
       // Note: Organization check will be handled by ProtectedRoute
       // If user is a dealer without organization, they'll be redirected there
       
-      // Session is established - redirect to dashboard with full page reload
+      // Session is established and verified - redirect to profile page
       // Use full page reload to ensure session is properly picked up
-      console.log('[LoginForm] Session verified, redirecting to dealer dashboard');
-      window.location.href = '/dealer';
+      console.log('[LoginForm] Session verified, redirecting to profile page');
+      // Give a small delay to ensure localStorage is written
+      await new Promise(resolve => setTimeout(resolve, 100));
+      window.location.href = '/profile';
     } catch (err: any) {
       console.error('[LoginForm] Login failed:', err);
       

@@ -6,6 +6,7 @@ import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { userRouter } from "./routers/user";
 import { profileRouter } from "./routers/profile";
 import * as db from "./db";
+import { ENV } from "./_core/env";
 import type {
   VehicleListing,
   ListingImage,
@@ -1306,30 +1307,101 @@ export const appRouter = router({
       create: protectedProcedure
         .input(
           z.object({
-            listingType: z.enum(["stock_unit", "build_to_order"]),
-            vin: z.string().length(17).regex(/^[A-HJ-NPR-Z0-9]{17}$/),
-            year: z.number().int().min(2000).max(new Date().getFullYear() + 1),
-            make: z.string().min(1),
-            model: z.string().min(1),
+            listingType: z.enum(["stock_unit", "build_to_order"]).optional(),
+            vin: z.string().optional().refine(
+              (val) => !val || val.length === 0 || (val.length === 17 && /^[A-HJ-NPR-Z0-9]{17}$/.test(val)),
+              { message: "VIN must be 17 characters and cannot contain I, O, or Q" }
+            ),
+            year: z.number().int().min(2000).max(new Date().getFullYear() + 1).optional().nullable(),
+            make: z.string().optional(),
+            model: z.string().optional(),
             series: z.string().optional(),
             bodyStyle: z.string().optional(),
-            fuelType: z.enum(["gasoline", "diesel", "electric", "hybrid", "cng", "propane"]),
+            fuelType: z.enum(["gasoline", "diesel", "electric", "hybrid", "cng", "propane"]).optional(),
             wheelbase: z.number().positive().optional(),
             gvwr: z.number().positive().optional(),
             payload: z.number().positive().optional(),
             engineDescription: z.string().optional(),
             transmission: z.string().optional(),
             driveType: z.enum(["RWD", "AWD", "4WD", "FWD"]).optional(),
-            hasEquipment: z.boolean(),
-            equipmentManufacturer: z.string().optional(),
+            hasEquipment: z.boolean().optional(),
+            // Equipment table fields (04. Equipment Data.equipment)
+            equipmentUpfitterName: z.string().optional(),
             equipmentProductLine: z.string().optional(),
+            equipmentModelName: z.string().optional(),
             equipmentType: z.string().optional(),
+            equipmentSubtype: z.string().optional(),
+            equipmentPrimaryMaterial: z.string().optional(),
+            equipmentBodyCategory: z.string().optional(),
+            equipmentApplicationType: z.string().optional(),
+            equipmentStartingMsrp: z.number().positive().optional(),
+            equipmentMarketingDescription: z.string().optional(),
+            // Equipment_config table fields (04. Equipment Data.equipment_config)
+            equipmentConfigName: z.string().optional(),
+            equipmentConfigCode: z.string().optional(),
+            equipmentModelNumber: z.string().optional(),
             equipmentLength: z.number().positive().optional(),
+            equipmentWidth: z.number().positive().optional(),
+            equipmentHeight: z.number().positive().optional(),
+            equipmentInteriorLength: z.number().positive().optional(),
+            equipmentInteriorWidth: z.number().positive().optional(),
+            equipmentInteriorHeight: z.number().positive().optional(),
+            equipmentUsableVolumeCubicFeet: z.number().positive().optional(),
             equipmentWeight: z.number().positive().optional(),
-            askingPrice: z.number().positive(),
+            equipmentMaximumPayload: z.number().positive().optional(),
+            equipmentMinimumCabToAxle: z.number().positive().optional(),
+            equipmentMaximumCabToAxle: z.number().positive().optional(),
+            equipmentRecommendedCabToAxle: z.number().positive().optional(),
+            equipmentMountingType: z.string().optional(),
+            equipmentRequiresSubframe: z.boolean().optional(),
+            equipmentCompatibleGvwrMin: z.number().positive().optional(),
+            equipmentCompatibleGvwrMax: z.number().positive().optional(),
+            equipmentMaterial: z.string().optional(),
+            equipmentGaugeThickness: z.string().optional(),
+            equipmentCoatingFinish: z.string().optional(),
+            equipmentCorrosionProtection: z.string().optional(),
+            equipmentToolCompartmentVolume: z.number().positive().optional(),
+            equipmentDoorStyle: z.string().optional(),
+            equipmentLockingMechanism: z.string().optional(),
+            equipmentDoorConfiguration: z.string().optional(),
+            equipmentCompartmentCount: z.number().int().positive().optional(),
+            equipmentDrawerCount: z.number().int().positive().optional(),
+            equipmentShelfCount: z.number().int().positive().optional(),
+            equipmentHasInteriorLighting: z.boolean().optional(),
+            equipmentHasExteriorLighting: z.boolean().optional(),
+            equipmentHasPowerOutlets: z.boolean().optional(),
+            equipmentElectricalSystemVoltage: z.number().int().positive().optional(),
+            equipmentHasCraneProvisions: z.boolean().optional(),
+            equipmentCraneMountingLocation: z.string().optional(),
+            equipmentMaxCraneCapacity: z.number().positive().optional(),
+            equipmentHasLadderRackProvisions: z.boolean().optional(),
+            equipmentLadderRackType: z.string().optional(),
+            equipmentHasStakePockets: z.boolean().optional(),
+            equipmentHasTieDowns: z.boolean().optional(),
+            equipmentTieDownCount: z.number().int().positive().optional(),
+            equipmentFrontAxleWeightDistribution: z.number().positive().optional(),
+            equipmentRearAxleWeightDistribution: z.number().positive().optional(),
+            equipmentCenterOfGravityFromRearAxle: z.number().positive().optional(),
+            equipmentBaseMsrp: z.number().positive().optional(),
+            equipmentDealerCost: z.number().positive().optional(),
+            equipmentInstallationLaborHours: z.number().positive().optional(),
+            equipmentEstimatedInstallationCost: z.number().positive().optional(),
+            equipmentLeadTimeDays: z.number().int().positive().optional(),
+            equipmentMinimumOrderQuantity: z.number().int().positive().optional(),
+            equipmentMeetsFmvss: z.boolean().optional(),
+            equipmentFmvssComplianceNotes: z.string().optional(),
+            equipmentDotApproved: z.boolean().optional(),
+            equipmentNotes: z.string().optional(),
+            // Legacy field names for backward compatibility
+            equipmentManufacturer: z.string().optional(),
+            doorConfiguration: z.string().optional(),
+            compartmentCount: z.number().int().positive().optional(),
+            hasInteriorLighting: z.boolean().optional(),
+            hasExteriorLighting: z.boolean().optional(),
+            askingPrice: z.number().positive().optional().nullable(),
             specialPrice: z.number().positive().optional(),
             stockNumber: z.string().optional(),
-            condition: z.enum(["new", "used", "certified_pre_owned", "demo"]),
+            condition: z.enum(["new", "used", "certified_pre_owned", "demo"]).optional(),
             mileage: z.number().nonnegative().optional(),
             exteriorColor: z.string().optional(),
             interiorColor: z.string().optional(),
@@ -1340,51 +1412,205 @@ export const appRouter = router({
           })
           .refine(
             (data) => {
-              if (data.condition === "used" || data.condition === "certified_pre_owned") {
-                return data.mileage !== undefined && data.mileage !== null;
+              // Special price must be less than asking price (only if both are provided)
+              if (
+                data.specialPrice !== undefined && 
+                data.specialPrice !== null &&
+                data.askingPrice !== undefined && 
+                data.askingPrice !== null
+              ) {
+                return data.specialPrice < data.askingPrice;
               }
               return true;
             },
-            { message: "Mileage is required for used vehicles", path: ["mileage"] }
-          )
-          .refine(
-            (data) => {
-              if (data.hasEquipment) {
-                return data.equipmentManufacturer && data.equipmentManufacturer.length > 0;
-              }
-              return true;
-            },
-            { message: "Equipment manufacturer is required when equipment is installed", path: ["equipmentManufacturer"] }
+            {
+              message: "Special price must be less than asking price",
+              path: ["specialPrice"],
+            }
           )
         )
         .mutation(async ({ ctx, input }) => {
-          // Check if user is dealer or admin (support both OAuth and Supabase auth)
-          const isDealer = ctx.user?.role === "dealer" || ctx.user?.role === "admin";
-          const isSupabaseUser = !!ctx.supabaseUser;
+          try {
+            console.log('[createListing] Starting listing creation...');
+            console.log('[createListing] Context:', {
+              hasUser: !!ctx.user,
+              hasSupabaseUser: !!ctx.supabaseUser,
+              supabaseUserId: ctx.supabaseUser?.id,
+            });
+            
+            // Check if user is dealer or admin (support both OAuth and Supabase auth)
+            const isDealer = ctx.user?.role === "dealer" || ctx.user?.role === "admin";
+            const isSupabaseUser = !!ctx.supabaseUser;
+            
+            if (!isDealer && !isSupabaseUser) {
+              throw new Error("Unauthorized: Dealer access required");
+            }
+
+            const { createListingFromDealerInput } = await import("./lib/database/smart-routing");
+            const { querySchemaTable } = await import("./lib/supabase-db");
+            const { createClient } = await import("@supabase/supabase-js");
+            const { getSupabaseClient } = await import("./_core/supabase");
+
+            // Create a user-scoped Supabase client with the user's session token
+            // This is required for auth.uid() to work in permission check functions
+            let supabase: ReturnType<typeof createClient>;
+            const authHeader = ctx.req.headers.authorization;
+            
+            console.log('[createListing] Auth header present:', !!authHeader);
+            
+            if (isSupabaseUser && authHeader && authHeader.startsWith('Bearer ')) {
+              // For Supabase auth users, create a user-scoped client with their token
+              const token = authHeader.substring(7);
+              console.log('[createListing] Creating user-scoped Supabase client with token length:', token.length);
+              supabase = createClient(ENV.supabaseUrl, ENV.supabaseAnonKey, {
+                global: {
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                  },
+                },
+              });
+              
+              // Verify the client can get the user (pass token explicitly to ensure it works)
+              const { data: { user: authUser }, error: authError } = await supabase.auth.getUser(token);
+              if (authError || !authUser) {
+                console.error('[createListing] Failed to verify user with Supabase client:', authError);
+                throw new Error(`Authentication failed: ${authError?.message || 'Unable to verify user'}`);
+              }
+              console.log('[createListing] Verified user:', authUser.id);
+            } else if (isDealer && !isSupabaseUser) {
+              // For OAuth users, use service role client (legacy support)
+              // Note: Permission checks may not work correctly for OAuth users
+              console.log('[createListing] Using service role client for OAuth user');
+              supabase = getSupabaseClient();
+            } else {
+              throw new Error("Unauthorized: No authorization token provided");
+            }
           
-          if (!isDealer && !isSupabaseUser) {
-            throw new Error("Unauthorized: Dealer access required");
-          }
-
-          const { createListingFromDealerInput } = await import("./lib/database/smart-routing");
-          const { getSupabaseClient } = await import("./_core/supabase");
-          const { querySchemaTable } = await import("./lib/supabase-db");
-
-          const supabase = getSupabaseClient();
+          // Development bypass flag (set SKIP_PROFILE_VALIDATION=true in .env for local dev)
+          const skipValidation = process.env.SKIP_PROFILE_VALIDATION === 'true' && !ENV.isProduction;
           
           // Get dealer ID from context
           let dealerId: number | null = null;
+          let organizationId: number | null = null;
+          let organizationName: string | null = null;
+          let userRole: string | null = null;
+          let orgStatus: string | null = null;
+          let orgCompletionPct: number | null = null;
+          let dealerCompletionPct: number | null = null;
+          const missingItems: string[] = [];
           
           if (ctx.supabaseUser) {
-            // Get dealer ID from Supabase user
-            const { data, error } = await supabase.rpc('get_user_dealer_id');
-            if (!error && data) {
-              dealerId = data;
+            // First, try to get dealer ID from profile data (most reliable)
+            try {
+              const { data: profileData } = await supabase.rpc('get_current_user_profile');
+              const profile = Array.isArray(profileData) ? profileData[0] : profileData;
+              
+              if (profile && typeof profile === 'object' && !('error' in profile)) {
+                const profileObj = profile as any;
+                organizationId = profileObj.organization_id || null;
+                organizationName = profileObj.organization?.organization_name || profileObj.organization_name || null;
+                userRole = profileObj.role || null;
+                orgStatus = profileObj.organization?.status || null;
+                orgCompletionPct = profileObj.organization?.profile_completion_percentage ?? null;
+                dealerCompletionPct = profileObj.dealer?.profile_completion_percentage ?? null;
+                
+                // Check if dealer is in profile data
+                if (profileObj.dealer?.id) {
+                  dealerId = profileObj.dealer.id;
+                }
+              }
+            } catch (profileError) {
+              console.warn('[createListing] Error getting profile:', profileError);
+            }
+
+            // If still no dealer ID, try the get_user_dealer_id RPC
+            if (!dealerId) {
+              const { data, error } = await supabase.rpc('get_user_dealer_id');
+              if (!error && data) {
+                dealerId = data;
+              }
+            }
+
+            // If still no dealer ID, try to find dealer by organization
+            if (!dealerId && organizationId) {
+              const dealers = await querySchemaTable<{ id: number; profile_completion_percentage: number | null }>(
+                "02a. Dealership",
+                "dealers",
+                {
+                  where: { organization_id: organizationId },
+                  limit: 1,
+                }
+              );
+              if (dealers.length > 0) {
+                dealerId = dealers[0].id;
+                dealerCompletionPct = dealers[0].profile_completion_percentage ?? null;
+              }
+            }
+
+            // If still no organization, try to get it from organization_users using schema helper
+            if (!organizationId) {
+              try {
+                const orgUsers = await querySchemaTable<{ 
+                  organization_id: number; 
+                  role: string;
+                }>(
+                  "01. Organization",
+                  "organization_users",
+                  {
+                    where: { user_id: ctx.supabaseUser.id },
+                    limit: 1,
+                  }
+                );
+                
+                if (orgUsers.length > 0 && orgUsers[0].organization_id) {
+                  organizationId = orgUsers[0].organization_id;
+                  userRole = orgUsers[0].role || null;
+                  
+                  // Get organization details
+                  const orgs = await querySchemaTable<{ 
+                    id: number; 
+                    organization_name: string; 
+                    status: string;
+                    profile_completion_percentage: number | null;
+                  }>(
+                    "01. Organization",
+                    "organizations",
+                    {
+                      where: { id: organizationId },
+                      limit: 1,
+                    }
+                  );
+                  if (orgs.length > 0) {
+                    organizationName = orgs[0].organization_name;
+                    orgStatus = orgs[0].status;
+                    orgCompletionPct = orgs[0].profile_completion_percentage ?? null;
+                  }
+                  
+                  // Try to find dealer for this organization
+                  if (!dealerId) {
+                    const dealers = await querySchemaTable<{ id: number; profile_completion_percentage: number | null }>(
+                      "02a. Dealership",
+                      "dealers",
+                      {
+                        where: { organization_id: organizationId },
+                        limit: 1,
+                      }
+                    );
+                    if (dealers.length > 0) {
+                      dealerId = dealers[0].id;
+                      dealerCompletionPct = dealers[0].profile_completion_percentage ?? null;
+                    }
+                  }
+                }
+              } catch (orgUserError) {
+                console.warn('[createListing] Error querying organization_users:', orgUserError);
+              }
             }
           } else if (ctx.user) {
             // Get dealer ID from OAuth user
             const profile = await db.getUserById(ctx.user.id);
             if (profile?.companyId) {
+              organizationId = profile.companyId;
               const dealers = await querySchemaTable<{ id: number }>(
                 "02a. Dealership",
                 "dealers",
@@ -1399,8 +1625,60 @@ export const appRouter = router({
             }
           }
 
+          // Build detailed validation messages
+          if (!organizationId) {
+            missingItems.push('Organization not found. Please complete organization setup at /profile');
+          } else {
+            if (orgStatus !== 'active') {
+              missingItems.push(`Organization status is "${orgStatus}" (must be "active")`);
+            }
+            if (orgCompletionPct !== null && orgCompletionPct < 50) {
+              missingItems.push(`Organization profile is only ${orgCompletionPct}% complete`);
+            }
+          }
+
           if (!dealerId) {
-            throw new Error("Dealer record not found for this user");
+            if (organizationId) {
+              // Try to auto-create dealer record
+              try {
+                const { data: createResult, error: createError } = await supabase.rpc('ensure_dealer_for_current_user');
+                const result = createResult as any;
+                if (!createError && result?.success && result?.dealer_id) {
+                  dealerId = result.dealer_id;
+                  console.log('[createListing] Auto-created dealer record:', dealerId);
+                } else {
+                  missingItems.push('Dealer profile not set up. Please complete dealership information at /profile');
+                }
+              } catch (createErr) {
+                console.warn('[createListing] Failed to auto-create dealer:', createErr);
+                missingItems.push('Dealer profile not set up. Please complete dealership information at /profile');
+              }
+            } else {
+              missingItems.push('Dealer profile cannot be created without an organization');
+            }
+          } else {
+            if (dealerCompletionPct !== null && dealerCompletionPct < 50) {
+              missingItems.push(`Dealer profile is only ${dealerCompletionPct}% complete`);
+            }
+          }
+
+          // Check user role permissions
+          if (userRole === 'viewer') {
+            missingItems.push('Your role is "viewer" which cannot create listings. Contact your organization administrator.');
+          }
+
+          // If validation is skipped (dev mode), log warnings but continue
+          if (skipValidation && missingItems.length > 0) {
+            console.warn('[createListing] DEV MODE: Skipping validation. Missing items:', missingItems);
+          } else if (missingItems.length > 0 && !dealerId) {
+            // Block if dealer ID is missing (critical)
+            const errorMessage = missingItems.length === 1 
+              ? missingItems[0]
+              : `Multiple issues found:\n${missingItems.map((item, idx) => `${idx + 1}. ${item}`).join('\n')}\n\nPlease resolve these issues at /profile before creating listings.`;
+            throw new Error(errorMessage);
+          } else if (missingItems.length > 0) {
+            // Warn but don't block if dealer exists but profile is incomplete
+            console.warn('[createListing] Profile incomplete but proceeding:', missingItems);
           }
 
           // Check if VIN was decoded (get enriched data from cache)
@@ -1412,47 +1690,99 @@ export const appRouter = router({
           }
 
           // Pass enriched data through the entire creation flow
-          const result = await createListingFromDealerInput(supabase, dealerId, input, enrichedData);
+          try {
+            const result = await createListingFromDealerInput(supabase, dealerId, input, enrichedData);
 
-          if (!result.success) {
-            // Provide more user-friendly error messages
-            const errorMessages = result.errors || [];
-            let userMessage = "Failed to create listing";
-            
-            if (errorMessages.length > 0) {
-              // Map technical errors to user-friendly messages
-              const friendlyMessages = errorMessages.map(err => {
-                if (err.includes("Dealer record not found")) {
-                  return "Your dealer account is not set up. Please contact support.";
-                }
-                if (err.includes("organization")) {
-                  return "Organization setup issue. Please contact support.";
-                }
-                if (err.includes("permission")) {
-                  return "You don't have permission to create listings. Please contact your organization administrator.";
-                }
-                if (err.includes("VIN") || err.includes("vin")) {
-                  return "There was an issue processing the VIN. Please verify the VIN is correct.";
-                }
-                if (err.includes("vehicle") || err.includes("Vehicle")) {
-                  return "There was an issue creating the vehicle record. Please try again.";
-                }
-                if (err.includes("equipment") || err.includes("Equipment")) {
-                  return "There was an issue processing the equipment information. Please check your equipment details.";
-                }
-                if (err.includes("compatibility") || err.includes("Compatibility")) {
-                  return "The vehicle and equipment combination may not be compatible. Please review your specifications.";
-                }
-                return err;
-              });
+            if (!result.success) {
+              // Provide more user-friendly error messages
+              const errorMessages = result.errors || [];
+              let userMessage = "Failed to create listing";
               
-              userMessage = friendlyMessages.join(". ");
+              if (errorMessages.length > 0) {
+                // Map technical errors to user-friendly messages
+                const friendlyMessages = errorMessages.map(err => {
+                  // Preserve diagnostic messages that start with "Permission denied:"
+                  if (err.startsWith("Permission denied:")) {
+                    return err;
+                  }
+                  if (err.includes("Dealer record not found")) {
+                    return "Your dealer account is not set up. Please contact support.";
+                  }
+                  if (err.includes("organization")) {
+                    return "Organization setup issue. Please contact support.";
+                  }
+                  if (err.includes("permission")) {
+                    return "You don't have permission to create listings. Please contact your organization administrator.";
+                  }
+                  if (err.includes("VIN") || err.includes("vin")) {
+                    return "There was an issue processing the VIN. Please verify the VIN is correct.";
+                  }
+                  if (err.includes("vehicle") || err.includes("Vehicle")) {
+                    return "There was an issue creating the vehicle record. Please try again.";
+                  }
+                  if (err.includes("equipment") || err.includes("Equipment")) {
+                    return "There was an issue processing the equipment information. Please check your equipment details.";
+                  }
+                  if (err.includes("compatibility") || err.includes("Compatibility")) {
+                    return "The vehicle and equipment combination may not be compatible. Please review your specifications.";
+                  }
+                  return err;
+                });
+                
+                userMessage = friendlyMessages.join(". ");
+              }
+              
+              throw new Error(userMessage);
+            }
+
+            return result;
+          } catch (error) {
+            // Catch errors thrown from createListingFromDealerInput (like permission errors)
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.log('[createListing] Caught error:', errorMessage);
+            console.log('[createListing] Error details:', error);
+            
+            // ALWAYS preserve diagnostic messages that start with "Permission denied:"
+            if (errorMessage.startsWith("Permission denied:")) {
+              console.log('[createListing] Preserving diagnostic message:', errorMessage);
+              throw new Error(errorMessage);
             }
             
-            throw new Error(userMessage);
+            // For other permission errors, check if they contain diagnostic details
+            const lowerMessage = errorMessage.toLowerCase();
+            const hasDiagnosticDetails = 
+              lowerMessage.includes("organization status") || 
+              lowerMessage.includes("organization user status") ||
+              lowerMessage.includes("organization type") ||
+              lowerMessage.includes("dealer record") ||
+              lowerMessage.includes("user role") ||
+              lowerMessage.includes("no organization") ||
+              lowerMessage.includes("no dealer") ||
+              lowerMessage.includes("can_list_vehicles");
+            
+            if (hasDiagnosticDetails) {
+              // Preserve diagnostic details even if message doesn't start with "Permission denied:"
+              console.log('[createListing] Preserving error with diagnostic details:', errorMessage);
+              throw new Error(errorMessage);
+            }
+            
+            // For generic permission errors without details, provide helpful message
+            if (lowerMessage.includes("permission") || lowerMessage.includes("does not have permission")) {
+              console.log('[createListing] Converting to generic permission message');
+              throw new Error("You don't have permission to create listings. Please contact your organization administrator.");
+            }
+            
+            // Re-throw other errors as-is
+            console.log('[createListing] Re-throwing error as-is');
+            throw error;
           }
-
-          return result;
+          } catch (outerError) {
+            // Catch any errors that occur outside the inner try-catch
+            const errorMessage = outerError instanceof Error ? outerError.message : String(outerError);
+            console.error('[createListing] Outer catch - unexpected error:', errorMessage);
+            console.error('[createListing] Outer catch - error stack:', outerError instanceof Error ? outerError.stack : 'No stack');
+            throw outerError;
+          }
         }),
 
       /**

@@ -36,40 +36,66 @@ async function uploadToSupabase(
     ? Buffer.from(data, 'base64') 
     : Buffer.from(data);
   
-  // Try to create bucket if it doesn't exist (requires service role)
+  // Use service role client for uploads to bypass RLS policies
   // Check if we have service role key available
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (serviceRoleKey) {
+  const serviceRoleKey = ENV.supabaseServiceRoleKey;
+  let uploadClient = supabase; // Fallback to regular client if service role not available
+  
+  if (serviceRoleKey && ENV.supabaseUrl) {
     try {
-      // Create a client with service role for bucket operations
+      // Create a client with service role for bucket operations and uploads
       const { createClient } = await import('@supabase/supabase-js');
       const serviceClient = createClient(ENV.supabaseUrl, serviceRoleKey);
+      uploadClient = serviceClient; // Use service role client for uploads
       
-      const { data: buckets } = await serviceClient.storage.listBuckets();
-      const bucketExists = buckets?.some(b => b.name === bucketName);
+      const { data: buckets, error: listError } = await serviceClient.storage.listBuckets();
       
-      if (!bucketExists) {
-        console.log(`[Storage] Bucket '${bucketName}' not found, attempting to create...`);
-        const { error: createError } = await serviceClient.storage.createBucket(bucketName, {
-          public: true,
-          fileSizeLimit: 52428800, // 50MB
-          allowedMimeTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-        });
+      if (listError) {
+        console.warn(`[Storage] Could not list buckets: ${listError.message}`);
+      } else {
+        const bucketExists = buckets?.some(b => b.name === bucketName);
         
-        if (createError) {
-          console.warn(`[Storage] Could not create bucket '${bucketName}': ${createError.message}`);
+        if (!bucketExists) {
+          console.log(`[Storage] Bucket '${bucketName}' not found, attempting to create...`);
+          const { data: bucketData, error: createError } = await serviceClient.storage.createBucket(bucketName, {
+            public: true,
+            fileSizeLimit: 52428800, // 50MB
+            allowedMimeTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+          });
+          
+          if (createError) {
+            console.warn(`[Storage] Could not create bucket '${bucketName}': ${createError.message}`);
+            // If bucket creation fails, throw a more helpful error
+            if (createError.message?.includes('already exists') || createError.message?.includes('duplicate')) {
+              console.log(`[Storage] Bucket '${bucketName}' may already exist, continuing...`);
+            } else {
+              throw new Error(
+                `Failed to create storage bucket '${bucketName}'. Please create it manually in Supabase Dashboard: ` +
+                `Go to Storage > New bucket > Name: ${bucketName}, Public: true, File size limit: 50MB. ` +
+                `Error: ${createError.message}`
+              );
+            }
+          } else {
+            console.log(`[Storage] Successfully created bucket '${bucketName}'`);
+          }
         } else {
-          console.log(`[Storage] Successfully created bucket '${bucketName}'`);
+          console.log(`[Storage] Bucket '${bucketName}' already exists`);
         }
       }
-    } catch (err) {
-      // Ignore bucket check/creation errors - we'll handle upload errors below
-      console.warn(`[Storage] Could not check/create bucket: ${err}`);
+    } catch (err: any) {
+      // If it's not a bucket creation error, re-throw it
+      if (err.message?.includes('Failed to create storage bucket')) {
+        throw err;
+      }
+      // Otherwise, log and continue - we'll handle upload errors below
+      console.warn(`[Storage] Could not check/create bucket: ${err?.message || err}`);
     }
+  } else {
+    console.warn(`[Storage] Service role key or Supabase URL not configured. Cannot auto-create bucket '${bucketName}'. Uploads may fail due to RLS policies.`);
   }
   
-  // Upload to Supabase Storage
-  const { data: uploadData, error } = await supabase.storage
+  // Upload to Supabase Storage using service role client (bypasses RLS)
+  const { data: uploadData, error } = await uploadClient.storage
     .from(bucketName)
     .upload(key, buffer, {
       contentType,
@@ -88,8 +114,8 @@ async function uploadToSupabase(
     throw new Error(`Supabase storage upload failed: ${error.message}`);
   }
   
-  // Get public URL
-  const { data: { publicUrl } } = supabase.storage
+  // Get public URL (can use either client for this)
+  const { data: { publicUrl } } = uploadClient.storage
     .from(bucketName)
     .getPublicUrl(uploadData.path);
   
@@ -210,4 +236,59 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
     key,
     url: await buildDownloadUrl(baseUrl, key, apiKey),
   };
+}
+
+/**
+ * Ensure the listing-images bucket exists in Supabase Storage
+ * This can be called during app initialization to ensure the bucket is ready
+ */
+export async function ensureListingImagesBucket(): Promise<boolean> {
+  const bucketName = 'listing-images';
+  const serviceRoleKey = ENV.supabaseServiceRoleKey;
+  
+  if (!serviceRoleKey || !ENV.supabaseUrl) {
+    console.warn(`[Storage] Cannot ensure bucket exists: Service role key or Supabase URL not configured`);
+    return false;
+  }
+  
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const serviceClient = createClient(ENV.supabaseUrl, serviceRoleKey);
+    
+    const { data: buckets, error: listError } = await serviceClient.storage.listBuckets();
+    
+    if (listError) {
+      console.error(`[Storage] Failed to list buckets: ${listError.message}`);
+      return false;
+    }
+    
+    const bucketExists = buckets?.some(b => b.name === bucketName);
+    
+    if (bucketExists) {
+      console.log(`[Storage] Bucket '${bucketName}' already exists`);
+      return true;
+    }
+    
+    console.log(`[Storage] Creating bucket '${bucketName}'...`);
+    const { data: bucketData, error: createError } = await serviceClient.storage.createBucket(bucketName, {
+      public: true,
+      fileSizeLimit: 52428800, // 50MB
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+    });
+    
+    if (createError) {
+      if (createError.message?.includes('already exists') || createError.message?.includes('duplicate')) {
+        console.log(`[Storage] Bucket '${bucketName}' already exists (checked after creation attempt)`);
+        return true;
+      }
+      console.error(`[Storage] Failed to create bucket '${bucketName}': ${createError.message}`);
+      return false;
+    }
+    
+    console.log(`[Storage] Successfully created bucket '${bucketName}'`);
+    return true;
+  } catch (err: any) {
+    console.error(`[Storage] Error ensuring bucket exists: ${err?.message || err}`);
+    return false;
+  }
 }

@@ -9,8 +9,8 @@ import { trpc } from "@/lib/trpc";
 interface ImageUploadProps {
   label?: string;
   value?: string;
-  onChange: (url: string) => void;
-  onRemove?: () => void;
+  onChange: (url: string) => void | Promise<void>;
+  onRemove?: () => void | Promise<void>;
   accept?: string;
   maxSizeMB?: number;
 }
@@ -27,8 +27,11 @@ export function ImageUpload({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const uploadMutation = trpc.upload.image.useMutation({
-    onSuccess: (data: { url: string; key: string }) => {
-      onChange(data.url);
+    onSuccess: async (data: { url: string; key: string }) => {
+      const result = onChange(data.url);
+      if (result instanceof Promise) {
+        await result;
+      }
       toast.success("Image uploaded successfully");
       setUploading(false);
     },
@@ -79,11 +82,17 @@ export function ImageUpload({
     }
   };
 
-  const handleRemove = () => {
+  const handleRemove = async () => {
     if (onRemove) {
-      onRemove();
+      const result = onRemove();
+      if (result instanceof Promise) {
+        await result;
+      }
     } else {
-      onChange("");
+      const result = onChange("");
+      if (result instanceof Promise) {
+        await result;
+      }
     }
   };
 

@@ -16,10 +16,9 @@ export default function Login() {
         const { data: { user } } = await supabase.auth.getUser();
         
         if (user) {
-          console.log('[Login] User already authenticated, redirecting to dealer');
-          // User is already logged in, redirect to dealer
-          // ProtectedRoute will handle organization check
-          setLocation('/dealer');
+          console.log('[Login] User already authenticated, redirecting to profile');
+          // User is already logged in, redirect to profile page
+          setLocation('/profile');
         }
       } catch (error) {
         // If check fails, stay on login page

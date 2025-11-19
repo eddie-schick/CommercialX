@@ -10,17 +10,27 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { APP_LOGO } from "@/const";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { getSupabaseClient } from "@/lib/supabase";
 import { toast } from "sonner";
+import { trpc } from "@/lib/trpc";
 // Removed getLoginUrl import - using direct /login route instead
 
 export default function Navigation() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { user, profile } = useCurrentUser();
   const [, setLocation] = useLocation();
+  
+  // Fetch full profile to get personal info (name, avatar)
+  // Only fetch if user is authenticated
+  const { data: fullProfile } = trpc.profile.get.useQuery(undefined, {
+    enabled: !!user,
+    refetchOnWindowFocus: false,
+    staleTime: 30000, // Cache for 30 seconds
+    retry: false, // Don't retry if it fails - we'll fall back to user_metadata
+  });
 
   const isAuthenticated = !!user;
 
@@ -39,10 +49,30 @@ export default function Navigation() {
     }
   };
 
+  // Get user avatar URL - prioritize full profile, then user metadata
+  const getUserAvatar = () => {
+    // First check full profile (most up-to-date)
+    if (fullProfile?.personal?.avatar) {
+      return fullProfile.personal.avatar;
+    }
+    // Fallback to user metadata (updated when profile is saved)
+    if (user?.user_metadata?.avatar) {
+      return user.user_metadata.avatar;
+    }
+    return null;
+  };
+
   // Get user initials for avatar
   const getUserInitials = () => {
-    if (profile?.name) {
-      return profile.name
+    // Get name from full profile first, then user metadata, then email
+    const name = fullProfile?.personal?.name || 
+                 user?.user_metadata?.name || 
+                 (user?.user_metadata?.firstName && user?.user_metadata?.lastName
+                   ? `${user.user_metadata.firstName} ${user.user_metadata.lastName}`
+                   : null);
+    
+    if (name) {
+      return name
         .split(" ")
         .map((n) => n[0])
         .join("")
@@ -55,9 +85,19 @@ export default function Navigation() {
     return "U";
   };
 
-  // Get user display name
+  // Get user display name - prioritize full profile, then user metadata
   const getUserDisplayName = () => {
-    if (profile?.name) return profile.name;
+    // First check full profile (most up-to-date)
+    if (fullProfile?.personal?.name) {
+      return fullProfile.personal.name;
+    }
+    // Fallback to user metadata (updated when profile is saved)
+    const name = user?.user_metadata?.name || 
+                 (user?.user_metadata?.firstName && user?.user_metadata?.lastName
+                   ? `${user.user_metadata.firstName} ${user.user_metadata.lastName}`
+                   : null);
+    
+    if (name) return name;
     if (user?.email) return user.email.split("@")[0];
     return "User";
   };
@@ -85,9 +125,9 @@ export default function Navigation() {
             <Link href="/financing" className="text-foreground hover:text-primary transition-colors font-medium">
               Financing
             </Link>
-            <Link href="/resources" className="text-foreground hover:text-primary transition-colors font-medium">
-              Resource Center
-            </Link>
+            <a href="https://resource.commercialevs.com/" target="_blank" rel="noopener noreferrer" className="text-foreground hover:text-primary transition-colors font-medium">
+              EV Resource Center
+            </a>
           </div>
 
           {/* CTA Buttons */}
@@ -102,6 +142,10 @@ export default function Navigation() {
                       aria-label="User menu"
                     >
                       <Avatar className="h-10 w-10">
+                        <AvatarImage 
+                          src={getUserAvatar() || undefined}
+                          alt={getUserDisplayName()}
+                        />
                         <AvatarFallback className="bg-primary text-primary-foreground">
                           {getUserInitials()}
                         </AvatarFallback>
@@ -157,7 +201,8 @@ export default function Navigation() {
                 <Link href="/login">Sign In</Link>
               </Button>
             )}
-            {profile && (
+            {/* Show "List Your Inventory" for authenticated users - profile will be loaded asynchronously */}
+            {isAuthenticated && (
               <Button className="bg-primary hover:bg-primary/90" asChild>
                 <Link href="/dealer">List Your Inventory</Link>
               </Button>
@@ -205,18 +250,24 @@ export default function Navigation() {
             >
               Financing
             </Link>
-            <Link
-              href="/resources"
+            <a
+              href="https://resource.commercialevs.com/"
+              target="_blank"
+              rel="noopener noreferrer"
               className="block py-2 text-foreground hover:text-primary transition-colors font-medium"
               onClick={toggleMenu}
             >
-              Resource Center
-            </Link>
+              EV Resource Center
+            </a>
             <div className="pt-4 space-y-2">
               {isAuthenticated ? (
                 <>
                   <div className="flex items-center gap-3 px-2 py-2 border-b border-border mb-2">
                     <Avatar className="h-10 w-10">
+                      <AvatarImage 
+                        src={getUserAvatar() || undefined}
+                        alt={getUserDisplayName()}
+                      />
                       <AvatarFallback className="bg-primary text-primary-foreground">
                         {getUserInitials()}
                       </AvatarFallback>
@@ -256,7 +307,8 @@ export default function Navigation() {
                   <Link href="/login" onClick={toggleMenu}>Sign In</Link>
                 </Button>
               )}
-              {profile && (
+              {/* Show "List Your Inventory" for authenticated users - profile will be loaded asynchronously */}
+              {isAuthenticated && (
                 <Button className="w-full bg-primary hover:bg-primary/90" onClick={toggleMenu} asChild>
                   <Link href="/dealer">List Your Inventory</Link>
                 </Button>

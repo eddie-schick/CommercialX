@@ -171,7 +171,7 @@ export function SignupForm() {
             acceptPrivacy: acceptPrivacy,
             marketingEmails: marketingEmails,
           },
-          emailRedirectTo: `${window.location.origin}/auth/verify?token=`,
+          emailRedirectTo: `${window.location.origin}/auth/verify`,
         },
       });
 

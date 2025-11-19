@@ -36,6 +36,7 @@ import Signup from "./pages/Signup";
 import Login from "./pages/Login";
 import SetupOrganization from "./pages/SetupOrganization";
 import VerifyEmail from "./pages/VerifyEmail";
+import AuthVerify from "./pages/AuthVerify";
 
 function Router() {
   return (
@@ -44,6 +45,7 @@ function Router() {
       <Route path="/signup" component={Signup} />
       <Route path="/login" component={Login} />
       <Route path="/verify-email" component={VerifyEmail} />
+      <Route path="/auth/verify" component={AuthVerify} />
       <Route path="/setup-organization" component={SetupOrganization} />
       <Route path="/onboarding/organization" component={SetupOrganization} />
        <Route path="/profile" component={Profile} />

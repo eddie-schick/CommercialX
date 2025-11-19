@@ -34,9 +34,20 @@ if (!supabaseUrl || !supabaseAnonKey) {
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+        storageKey: 'sb-auth-token',
+        flowType: 'pkce',
       },
     });
     console.log('[supabase.ts] ✅ Supabase client created successfully');
+    
+    // Verify session persistence is working
+    if (typeof window !== 'undefined') {
+      const storedSession = localStorage.getItem('sb-auth-token');
+      if (storedSession) {
+        console.log('[supabase.ts] ✅ Found stored session in localStorage');
+      }
+    }
   } catch (error) {
     console.error("[supabase.ts] ❌ Failed to create Supabase client:", error);
   }

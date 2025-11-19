@@ -113,8 +113,45 @@ export async function insertSchemaTable<T = any>(
     throw new Error("Database connection not available");
   }
 
+  // Define which fields are PostgreSQL text[] arrays vs JSONB
+  // This is based on the schema definition
+  const postgresArrayFields: Record<string, string[]> = {
+    '02a. Dealership': {
+      'dealers': ['specializations', 'makes_carried', 'sales_territory_states', 'certifications', 'awards'],
+      'vehicle_listings': ['key_highlights'],
+    },
+    '01. Organization': {
+      'organizations': [], // sales_territory_states is JSONB in organizations table
+    },
+    '03. Vehicle Data': {
+      'makes': ['specializes_in'],
+    },
+  };
+
+  const arrayFields = postgresArrayFields[schema]?.[table] || [];
+
+  // Process values to handle arrays correctly
   const columns = Object.keys(data);
-  const values = Object.values(data);
+  const values = columns.map(key => {
+    const value = data[key];
+    if (value === null || value === undefined) {
+      return null;
+    }
+    if (typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+      // JSONB object
+      return JSON.stringify(value);
+    } else if (Array.isArray(value)) {
+      // Check if it's a PostgreSQL text[] array or JSONB array
+      if (arrayFields.includes(key)) {
+        // PostgreSQL text[] array - pass as array directly
+        return value;
+      } else {
+        // JSONB array - stringify it
+        return JSON.stringify(value);
+      }
+    }
+    return value;
+  });
   const placeholders = values.map((_, i) => `$${i + 1}`).join(", ");
 
   const query = `
@@ -146,23 +183,45 @@ export async function updateSchemaTable<T = any>(
     throw new Error("Database connection not available");
   }
 
+  // Define which fields are PostgreSQL text[] arrays vs JSONB
+  // This is based on the schema definition
+  const postgresArrayFields: Record<string, string[]> = {
+    '02a. Dealership': {
+      'dealers': ['specializations', 'makes_carried', 'sales_territory_states', 'certifications', 'awards'],
+      'vehicle_listings': ['key_highlights'],
+    },
+    '01. Organization': {
+      'organizations': [], // sales_territory_states is JSONB in organizations table
+    },
+    '03. Vehicle Data': {
+      'makes': ['specializes_in'],
+    },
+  };
+
+  const arrayFields = postgresArrayFields[schema]?.[table] || [];
+
   const setClauses: string[] = [];
   const params: any[] = [];
   let paramIndex = 1;
 
   for (const [key, value] of Object.entries(data)) {
-    // Handle JSONB fields - postgres client should handle JSON automatically
-    // but we need to ensure objects/arrays are properly serialized
+    // Handle different field types
     if (value !== null && value !== undefined) {
       if (typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
-        // Plain object - likely JSONB field (like business_hours)
-        // Postgres client should handle JSON.stringify automatically, but we'll be explicit
+        // Plain object - JSONB field (like business_hours)
         setClauses.push(`${key} = $${paramIndex}`);
         params.push(JSON.stringify(value));
       } else if (Array.isArray(value)) {
-        // Array - likely JSONB array (like sales_territory_states)
-        setClauses.push(`${key} = $${paramIndex}`);
-        params.push(JSON.stringify(value));
+        // Array - check if it's a PostgreSQL text[] array or JSONB array
+        if (arrayFields.includes(key)) {
+          // PostgreSQL text[] array - pass as array directly, postgres client will handle conversion
+          setClauses.push(`${key} = $${paramIndex}`);
+          params.push(value);
+        } else {
+          // JSONB array - stringify it
+          setClauses.push(`${key} = $${paramIndex}`);
+          params.push(JSON.stringify(value));
+        }
       } else {
         // Primitive value
         setClauses.push(`${key} = $${paramIndex}`);
